@@ -299,8 +299,7 @@ body {
 
 .build-action-btn {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   width: 100%;
   padding: 6px 10px;
   margin: 4px 0;
@@ -312,6 +311,7 @@ body {
   cursor: pointer;
   transition: all 0.15s ease;
   font-family: inherit;
+  text-align: left;
 }
 
 .build-action-btn:hover:not(:disabled) {
@@ -325,12 +325,91 @@ body {
 }
 
 .build-action-btn.worker-btn {
-  border-color: var(--accent-green);
+  flex-direction: row;
   justify-content: center;
+  border-color: var(--accent-green);
 }
 
 .build-action-btn.upgrade-btn {
+  flex-direction: row;
+  justify-content: space-between;
   border-color: var(--accent-gold);
+}
+
+/* 建造选项内部布局 */
+
+.build-option-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.build-option-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.build-type-badge {
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.imp-badge {
+  background: rgba(96, 192, 64, 0.2);
+  color: var(--accent-green);
+}
+
+.dist-badge {
+  background: rgba(192, 96, 208, 0.2);
+  color: var(--accent-purple);
+}
+
+.build-cost {
+  color: var(--accent-orange);
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.build-option-yields {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  width: 100%;
+}
+
+/* hover 展开详情 */
+
+.build-option-detail {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease;
+  font-size: 11px;
+  color: var(--text-secondary);
+  width: 100%;
+}
+
+.build-action-btn:hover:not(:disabled) .build-option-detail {
+  max-height: 200px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-color);
+}
+
+.detail-row {
+  padding: 1px 0;
+}
+
+.detail-total {
+  font-weight: bold;
+  color: var(--text-primary);
+  margin-top: 2px;
+  padding-top: 2px;
+  border-top: 1px dashed var(--border-color);
 }
 
 /* ============ 底部操作栏 ============ */

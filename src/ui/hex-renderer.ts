@@ -238,13 +238,13 @@ export class HexRenderer {
       const yields = this.engine.getTileYields(tile.coord);
       const yieldText = this.formatYieldCompact(yields);
       if (yieldText) {
-        ctx.font = '10px sans-serif';
+        ctx.font = '11px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const metrics = ctx.measureText(yieldText);
-        const tw = metrics.width + 6;
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(cx - tw / 2, cy + 10, tw, 14);
+        const tw = metrics.width + 8;
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(cx - tw / 2, cy + 9, tw, 16);
         ctx.fillStyle = '#ffffff';
         ctx.fillText(yieldText, cx, cy + 17);
       }
@@ -314,12 +314,12 @@ export class HexRenderer {
 
   private formatYieldCompact(y: IYields): string {
     const parts: string[] = [];
-    if (y.gold) parts.push(`${y.gold}G`);
-    if (y.food) parts.push(`${y.food}F`);
-    if (y.production) parts.push(`${y.production}P`);
-    if (y.science) parts.push(`${y.science}S`);
-    if (y.culture) parts.push(`${y.culture}C`);
-    if (y.faith) parts.push(`${y.faith}H`);
+    if (y.gold) parts.push(`${y.gold}🪙`);
+    if (y.food) parts.push(`${y.food}🌾`);
+    if (y.production) parts.push(`${y.production}⚙️`);
+    if (y.science) parts.push(`${y.science}🔬`);
+    if (y.culture) parts.push(`${y.culture}🎭`);
+    if (y.faith) parts.push(`${y.faith}⛪`);
     return parts.join(' ');
   }
 

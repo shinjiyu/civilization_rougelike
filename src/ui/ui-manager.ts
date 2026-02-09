@@ -4,9 +4,9 @@
  * 与 Canvas 渲染器协作
  */
 
-import type { HexCoord, IShopCard, IYields } from '../core/types';
-import { yieldColor, yieldIcon, yieldsToString } from '../core/yields';
-import { calculateAdjacencyBonus, getNeighborTiles } from '../game/board';
+import type { HexCoord, IAdjacencyRule, IShopCard, IYields } from '../core/types';
+import { addYields, emptyYields, yieldColor, yieldIcon, yieldsToString } from '../core/yields';
+import { calculateAdjacencyBonus, getNeighborTiles, tileHasTag } from '../game/board';
 import type { GameEngine } from '../game/engine';
 import type { HexRenderer } from './hex-renderer';
 
@@ -476,8 +476,6 @@ export class UIManager {
       // 建造选项
       const availableImps = this.engine.getAvailableImprovements(coord);
       const availableDists = this.engine.getAvailableDistricts(coord);
-
-      // 过滤掉已有的同类改良
       const filteredImps = availableImps.filter(imp => tile.improvement?.id !== imp.id);
 
       if (filteredImps.length > 0 || availableDists.length > 0) {
@@ -485,22 +483,36 @@ export class UIManager {
 
         for (const imp of filteredImps) {
           const canBuild = state.storedProduction >= imp.productionCost;
-          html += `
-            <button class="build-action-btn" data-action="build-improvement" data-id="${imp.id}" ${canBuild ? '' : 'disabled'}>
-              <span>${imp.icon} ${imp.name}</span>
-              <span style="color:var(--accent-orange)">${imp.productionCost}⚙️</span>
-            </button>
-          `;
+          const preview = this.calcBuildPreview(coord, imp.yields, imp.adjacencyRules);
+          html += this.renderBuildOption({
+            action: 'build-improvement',
+            id: imp.id,
+            typeBadge: '改良',
+            badgeClass: 'imp-badge',
+            icon: imp.icon,
+            name: imp.name,
+            cost: imp.productionCost,
+            canBuild,
+            baseYields: imp.yields,
+            preview,
+          });
         }
 
         for (const dist of availableDists) {
           const canBuild = state.storedProduction >= dist.productionCost;
-          html += `
-            <button class="build-action-btn" data-action="build-district" data-id="${dist.id}" ${canBuild ? '' : 'disabled'}>
-              <span>${dist.icon} ${dist.name}</span>
-              <span style="color:var(--accent-orange)">${dist.productionCost}⚙️</span>
-            </button>
-          `;
+          const preview = this.calcBuildPreview(coord, dist.baseYields, dist.adjacencyRules);
+          html += this.renderBuildOption({
+            action: 'build-district',
+            id: dist.id,
+            typeBadge: '区域',
+            badgeClass: 'dist-badge',
+            icon: dist.icon,
+            name: dist.name,
+            cost: dist.productionCost,
+            canBuild,
+            baseYields: dist.baseYields,
+            preview,
+          });
         }
 
         html += '</div>';
@@ -519,6 +531,82 @@ export class UIManager {
     }
 
     this.tileInfo.innerHTML = html;
+  }
+
+  // -------- 建造预览计算 --------
+
+  /** 计算在指定位置建造时的收益预览 */
+  private calcBuildPreview(
+    coord: HexCoord,
+    baseYields: IYields,
+    adjacencyRules: IAdjacencyRule[]
+  ): { total: IYields; adjTotal: IYields; ruleDetails: { desc: string; bonusStr: string; matchCount: number }[] } {
+    const state = this.engine.getState();
+    const neighbors = getNeighborTiles(state.board, coord);
+
+    let adjTotal = emptyYields();
+    const ruleDetails: { desc: string; bonusStr: string; matchCount: number }[] = [];
+
+    for (const rule of adjacencyRules) {
+      const bonus = calculateAdjacencyBonus(rule, neighbors);
+      adjTotal = addYields(adjTotal, bonus);
+      const matchCount = neighbors.filter(n => tileHasTag(n, rule.matchTag)).length;
+      const bonusStr = yieldsToString(bonus);
+      ruleDetails.push({
+        desc: rule.description,
+        bonusStr: bonusStr !== '无产出' ? '+' + bonusStr : '无',
+        matchCount,
+      });
+    }
+
+    return { total: addYields(baseYields, adjTotal), adjTotal, ruleDetails };
+  }
+
+  /** 渲染单个建造选项按钮 */
+  private renderBuildOption(opt: {
+    action: string;
+    id: string;
+    typeBadge: string;
+    badgeClass: string;
+    icon: string;
+    name: string;
+    cost: number;
+    canBuild: boolean;
+    baseYields: IYields;
+    preview: ReturnType<UIManager['calcBuildPreview']>;
+  }): string {
+    const baseStr = yieldsToString(opt.baseYields);
+    const adjStr = yieldsToString(opt.preview.adjTotal);
+    const totalStr = yieldsToString(opt.preview.total);
+    const hasAdj = adjStr !== '无产出';
+
+    // 紧凑预览行
+    let previewLine = `+${baseStr}`;
+    if (hasAdj) {
+      previewLine += ` <span style="color:var(--accent-blue)">+${adjStr}(邻)</span>`;
+    }
+
+    // hover 详情
+    let detailHtml = `<div class="detail-row">基础产出: ${baseStr}</div>`;
+    for (const rd of opt.preview.ruleDetails) {
+      const countColor = rd.matchCount > 0 ? 'var(--accent-green)' : 'var(--text-muted)';
+      detailHtml += `<div class="detail-row">${rd.desc} → <span style="color:${countColor}">${rd.bonusStr}</span> <span style="color:var(--text-muted)">(${rd.matchCount}个匹配)</span></div>`;
+    }
+    detailHtml += `<div class="detail-row detail-total">总计: ${totalStr}</div>`;
+
+    return `
+      <button class="build-action-btn" data-action="${opt.action}" data-id="${opt.id}" ${opt.canBuild ? '' : 'disabled'}>
+        <div class="build-option-main">
+          <div class="build-option-left">
+            <span class="build-type-badge ${opt.badgeClass}">${opt.typeBadge}</span>
+            <span>${opt.icon} ${opt.name}</span>
+          </div>
+          <span class="build-cost">${opt.cost}⚙️</span>
+        </div>
+        <div class="build-option-yields">${previewLine}</div>
+        <div class="build-option-detail">${detailHtml}</div>
+      </button>
+    `;
   }
 
   // -------- 游戏结束 --------

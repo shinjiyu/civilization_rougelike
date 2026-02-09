@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>文明精铺 Roguelike</title>
+    <style>
+      /* 防止加载闪烁 */
+      body {
+        background: #0f1923;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <!-- 顶部 HUD -->
+      <div id="hud">
+        <div id="hud-turn">回合 0/20</div>
+        <div id="hud-yields"></div>
+        <div id="hud-score">得分 <span class="score-value">0</span></div>
+      </div>
+
+      <!-- 主体 -->
+      <div id="main">
+        <!-- 棋盘 -->
+        <div id="board-container">
+          <canvas id="board-canvas"></canvas>
+        </div>
+
+        <!-- 右侧面板 -->
+        <div id="side-panel">
+          <!-- 商店 -->
+          <div id="shop-panel">
+            <h3>
+              <span>商店</span>
+            </h3>
+            <div id="shop-cards"></div>
+          </div>
+
+          <!-- 地块信息 -->
+          <div id="info-panel">
+            <h3>地块信息</h3>
+            <div id="tile-info">
+              <div style="color: #607080">将鼠标移到地块上查看详情</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部操作栏 -->
+      <div id="action-bar">
+        <button id="btn-end-turn" class="action-btn primary">结束回合</button>
+        <button id="btn-reroll" class="action-btn">刷新 2🪙</button>
+        <button id="btn-new-game" class="action-btn">新游戏</button>
+      </div>
+
+      <!-- 游戏结束叠加层 -->
+      <div id="game-over-overlay">
+        <div id="game-over-content"></div>
+      </div>
+
+      <!-- 提示信息 -->
+      <div id="toast"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

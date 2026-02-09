@@ -18,6 +18,7 @@ export class HexRenderer {
   private offsetY = 0;
 
   private hoveredHex: HexCoord | null = null;
+  private selectedHex: HexCoord | null = null;
   private validPlacements: Set<string> = new Set();
 
   onHexClick: ((coord: HexCoord) => void) | null = null;
@@ -101,6 +102,11 @@ export class HexRenderer {
     this.draw();
   }
 
+  setSelectedHex(coord: HexCoord | null): void {
+    this.selectedHex = coord;
+    this.draw();
+  }
+
   draw(): void {
     const { ctx } = this;
     const w = this.canvas.width / (window.devicePixelRatio || 1);
@@ -118,6 +124,11 @@ export class HexRenderer {
     for (const key of this.validPlacements) {
       const [q, r] = key.split(',').map(Number);
       this.drawValidPlacementHighlight({ q, r });
+    }
+
+    // 选中高亮（金色边框）
+    if (this.selectedHex) {
+      this.drawSelectedHighlight(this.selectedHex);
     }
 
     // 悬停高亮
@@ -264,6 +275,23 @@ export class HexRenderer {
     ctx.fill();
     ctx.strokeStyle = '#40f040';
     ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  private drawSelectedHighlight(coord: HexCoord): void {
+    const { ctx } = this;
+    const { x, y } = hexToPixel(coord, HEX_SIZE);
+    const cx = x + this.offsetX;
+    const cy = y + this.offsetY;
+    const corners = hexCorners(cx, cy, HEX_SIZE);
+
+    ctx.beginPath();
+    ctx.moveTo(corners[0].x, corners[0].y);
+    for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
+    ctx.closePath();
+
+    ctx.strokeStyle = '#f0c040';
+    ctx.lineWidth = 3;
     ctx.stroke();
   }
 

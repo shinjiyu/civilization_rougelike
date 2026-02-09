@@ -1,6 +1,7 @@
 /**
  * 改良设施数据定义
  * 纯数据，不含逻辑
+ * 改良设施通过消耗生产力在地块上建造
  */
 
 import type { IImprovement } from '../core/types';
@@ -22,6 +23,7 @@ export const FARM: IImprovement = {
   placementRequireTags: ['flat', 'buildable'],
   tags: ['farm', 'improvement'],
   icon: '🌾',
+  productionCost: 8,
 };
 
 export const MINE: IImprovement = {
@@ -41,6 +43,7 @@ export const MINE: IImprovement = {
   placementRequireTags: ['hill', 'buildable'],
   tags: ['mine', 'improvement'],
   icon: '⛏️',
+  productionCost: 8,
 };
 
 export const TRADING_POST: IImprovement = {
@@ -60,6 +63,7 @@ export const TRADING_POST: IImprovement = {
   placementRequireTags: ['buildable'],
   tags: ['trading_post', 'improvement'],
   icon: '🏪',
+  productionCost: 8,
 };
 
 export const LUMBER_MILL: IImprovement = {
@@ -72,6 +76,7 @@ export const LUMBER_MILL: IImprovement = {
   placementRequireTags: ['forest', 'buildable'],
   tags: ['lumber_mill', 'improvement'],
   icon: '🪓',
+  productionCost: 8,
 };
 
 export const PLANTATION: IImprovement = {
@@ -91,6 +96,7 @@ export const PLANTATION: IImprovement = {
   placementRequireTags: ['flat', 'buildable'],
   tags: ['plantation', 'improvement'],
   icon: '🌿',
+  productionCost: 8,
 };
 
 /** 所有改良设施 registry */

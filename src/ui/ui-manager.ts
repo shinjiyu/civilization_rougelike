@@ -24,6 +24,8 @@ export class UIManager {
   private toast!: HTMLElement;
 
   private toastTimer: number | null = null;
+  /** 当前选中的地块坐标（null 表示无选中） */
+  private selectedTileCoord: HexCoord | null = null;
 
   constructor(engine: GameEngine, renderer: HexRenderer) {
     this.engine = engine;
@@ -32,6 +34,7 @@ export class UIManager {
     this.bindActions();
     this.bindRendererCallbacks();
     this.bindEngineEvents();
+    this.bindInfoPanelActions();
   }
 
   private cacheElements(): void {
@@ -55,8 +58,62 @@ export class UIManager {
       }
     });
     document.getElementById('btn-new-game')!.addEventListener('click', () => {
+      this.selectedTileCoord = null;
+      this.renderer.setSelectedHex(null);
       this.engine.startNewGame();
       this.gameOverOverlay.classList.remove('visible');
+    });
+
+    // 商店升级按钮（事件委托，因为按钮动态渲染）
+    document.getElementById('shop-panel')!.addEventListener('click', (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('#btn-upgrade-shop')) {
+        if (this.engine.upgradeShop()) {
+          this.showToast('商店已升级！');
+        } else {
+          this.showToast('科技不足');
+        }
+      }
+    });
+  }
+
+  /** 信息面板操作按钮的事件委托 */
+  private bindInfoPanelActions(): void {
+    this.tileInfo.addEventListener('click', (e: Event) => {
+      const target = e.target as HTMLElement;
+      const btn = target.closest('.build-action-btn') as HTMLElement | null;
+      if (!btn || !this.selectedTileCoord) return;
+
+      const action = btn.dataset.action!;
+      const coord = this.selectedTileCoord;
+
+      switch (action) {
+        case 'assign-worker':
+          if (this.engine.assignWorker(coord)) this.showToast('工人已分配');
+          else this.showToast('无法分配工人');
+          break;
+        case 'unassign-worker':
+          if (this.engine.unassignWorker(coord)) this.showToast('工人已撤回');
+          else this.showToast('无法撤回');
+          break;
+        case 'build-improvement': {
+          const impId = btn.dataset.id!;
+          if (this.engine.buildImprovement(coord, impId)) this.showToast('建造成功！');
+          else this.showToast('生产力不足');
+          break;
+        }
+        case 'build-district': {
+          const distId = btn.dataset.id!;
+          if (this.engine.buildDistrict(coord, distId)) this.showToast('建造成功！');
+          else this.showToast('生产力不足');
+          break;
+        }
+        case 'upgrade-improvement':
+          if (this.engine.upgradeTile(coord)) this.showToast('升级成功！');
+          else this.showToast('生产力不足');
+          break;
+      }
+      // engine 的操作会 emit state_changed → updateAll → 自动刷新
     });
   }
 
@@ -83,11 +140,13 @@ export class UIManager {
   private handleHexClick(coord: HexCoord): void {
     const state = this.engine.getState();
 
-    // 1. 放置模式：放置选中的卡牌
+    // 1. 放置模式：放置卡牌
     if (state.phase === 'placing' && state.selectedCard) {
       const success = this.engine.placeCard(coord);
       if (success) {
         this.renderer.clearValidPlacements();
+        this.selectedTileCoord = coord;
+        this.renderer.setSelectedHex(coord);
         this.showToast('放置成功！');
       } else {
         this.showToast('无法放置在此位置');
@@ -95,35 +154,32 @@ export class UIManager {
       return;
     }
 
-    // 2. 普通模式：工人调配 / 升级
-    const tile = this.engine.getTileAt(coord);
-    if (!tile || !tile.terrain) return;
-    if (tile.terrain.id === 'city_center') return;
-
-    if (tile.isWorked) {
-      // 已工作 → 取消分配
-      if (this.engine.unassignWorker(coord)) {
-        this.showToast('工人已撤回');
-        this.updateTileInfo(coord);
-      }
+    // 2. 选中/取消选中地块
+    if (
+      this.selectedTileCoord &&
+      this.selectedTileCoord.q === coord.q &&
+      this.selectedTileCoord.r === coord.r
+    ) {
+      this.selectedTileCoord = null;
+      this.renderer.setSelectedHex(null);
+      this.tileInfo.innerHTML =
+        '<div style="color: var(--text-muted)">点击地块查看详情和操作</div>';
     } else {
-      // 未工作 → 尝试分配
-      if (this.engine.getAvailableWorkers() > 0) {
-        if (this.engine.assignWorker(coord)) {
-          this.showToast('工人已分配');
-          this.updateTileInfo(coord);
-        }
-      } else {
-        this.showToast('没有空闲工人，先从其他地块撤回');
-      }
+      this.selectedTileCoord = coord;
+      this.renderer.setSelectedHex(coord);
+      this.updateTileInfo(coord);
     }
   }
 
   private handleHexHover(coord: HexCoord | null): void {
+    // 有选中地块时，信息面板不跟随鼠标
+    if (this.selectedTileCoord) return;
+
     if (coord) {
       this.updateTileInfo(coord);
     } else {
-      this.tileInfo.innerHTML = '<div style="color: var(--text-muted)">将鼠标移到地块上查看详情</div>';
+      this.tileInfo.innerHTML =
+        '<div style="color: var(--text-muted)">点击地块查看详情和操作</div>';
     }
   }
 
@@ -137,6 +193,10 @@ export class UIManager {
       return;
     }
     if (this.engine.selectCard(card)) {
+      // 选择卡牌时清除地块选中状态
+      this.selectedTileCoord = null;
+      this.renderer.setSelectedHex(null);
+
       const validCoords = this.engine.getValidPlacements();
       this.renderer.setValidPlacements(validCoords);
       if (validCoords.length === 0) {
@@ -154,6 +214,9 @@ export class UIManager {
   updateAll(): void {
     this.updateHUD();
     this.updateShop();
+    if (this.selectedTileCoord) {
+      this.updateTileInfo(this.selectedTileCoord);
+    }
     this.renderer.draw();
   }
 
@@ -163,7 +226,6 @@ export class UIManager {
     const available = this.engine.getAvailableWorkers();
     const threshold = this.engine.getGrowthThreshold();
 
-    // 回合 + 人口
     this.hudTurn.innerHTML = `
       <div>回合 ${state.turn}/${state.maxTurns}</div>
       <div style="font-size:13px;color:var(--text-secondary)">
@@ -174,10 +236,10 @@ export class UIManager {
       </div>
     `;
 
-    // 产出
-    const netFoodStr = state.perTurnNetFood >= 0
-      ? `<span style="color:var(--accent-green)">+${state.perTurnNetFood}</span>`
-      : `<span style="color:var(--accent-red)">${state.perTurnNetFood}</span>`;
+    const netFoodStr =
+      state.perTurnNetFood >= 0
+        ? `<span style="color:var(--accent-green)">+${state.perTurnNetFood}</span>`
+        : `<span style="color:var(--accent-red)">${state.perTurnNetFood}</span>`;
 
     this.hudYields.innerHTML = `
       ${this.yieldHtml('gold', state.storedGold, yields.gold)}
@@ -187,19 +249,18 @@ export class UIManager {
         <span class="yield-per-turn">(${netFoodStr}/t)</span>
       </div>
       ${this.yieldHtml('production', state.storedProduction, yields.production)}
-      ${this.yieldHtml('science', state.accumulatedScience, yields.science)}
+      ${this.yieldHtml('science', state.storedScience, yields.science)}
       ${this.yieldHtml('culture', state.accumulatedCulture, yields.culture)}
       ${this.yieldHtml('faith', state.accumulatedFaith, yields.faith)}
     `;
 
-    // 得分
     const score = this.engine.getFinalScore();
     this.hudScore.innerHTML = `得分 <span class="score-value">${score.total}</span>`;
 
-    // 按钮状态
     const rerollBtn = document.getElementById('btn-reroll') as HTMLButtonElement;
     if (rerollBtn) {
-      rerollBtn.disabled = state.storedGold < this.engine.getRerollCost() || state.phase === 'game_over';
+      rerollBtn.disabled =
+        state.storedGold < this.engine.getRerollCost() || state.phase === 'game_over';
       rerollBtn.textContent = `刷新 ${this.engine.getRerollCost()}🪙`;
     }
     const endTurnBtn = document.getElementById('btn-end-turn') as HTMLButtonElement;
@@ -223,9 +284,23 @@ export class UIManager {
 
   private updateShop(): void {
     const state = this.engine.getState();
+    const shopPanel = document.getElementById('shop-panel')!;
+    const shopH3 = shopPanel.querySelector('h3')!;
+
+    // 商店等级 + 升级按钮
+    const upgradeCost = this.engine.getShopUpgradeCost();
+    let upgradeHtml = '';
+    if (upgradeCost !== null) {
+      const canUpgrade = state.storedScience >= upgradeCost;
+      upgradeHtml = `<button id="btn-upgrade-shop" class="shop-upgrade-btn" ${canUpgrade ? '' : 'disabled'}>升级 ${upgradeCost}🔬</button>`;
+    } else {
+      upgradeHtml = '<span style="color:var(--accent-gold);font-size:11px">MAX</span>';
+    }
+    shopH3.innerHTML = `<span>商店 Lv.${state.shopLevel}</span>${upgradeHtml}`;
 
     if (state.phase === 'game_over') {
-      this.shopCards.innerHTML = '<div style="color: var(--text-muted); padding: 20px; text-align: center;">游戏结束</div>';
+      this.shopCards.innerHTML =
+        '<div style="color: var(--text-muted); padding: 20px; text-align: center;">游戏结束</div>';
       return;
     }
 
@@ -241,7 +316,13 @@ export class UIManager {
       cardEl.setAttribute('tabindex', '0');
       cardEl.setAttribute('aria-label', `${card.name} ${card.cost}金币`);
 
-      const typeLabel = card.type === 'terrain' ? '地形' : card.type === 'improvement' ? '改良' : '区域';
+      const tierStars = '\u2605'.repeat(card.tier);
+      const tierColor =
+        card.tier === 3
+          ? 'var(--accent-purple)'
+          : card.tier === 2
+            ? 'var(--accent-blue)'
+            : 'var(--text-muted)';
       const yields = this.getCardYields(card);
 
       cardEl.innerHTML = `
@@ -249,7 +330,7 @@ export class UIManager {
           <span class="card-name">${card.icon} ${card.name}</span>
           <span class="card-cost">${card.cost}🪙</span>
         </div>
-        <span class="card-type">${typeLabel}</span>
+        <span class="card-tier" style="color:${tierColor}">${tierStars}</span>
         <div class="card-desc">${card.description}</div>
         ${yields ? `<div class="card-yields">产出: ${yields}</div>` : ''}
       `;
@@ -264,20 +345,21 @@ export class UIManager {
 
   private getCardYields(card: IShopCard): string {
     const parts: string[] = [];
-    if (card.terrain) parts.push(yieldsToString(card.terrain.baseYields));
+    parts.push(yieldsToString(card.terrain.baseYields));
     if (card.feature) {
       const fStr = yieldsToString(card.feature.yieldModifier);
       if (fStr !== '无产出') parts.push(fStr);
     }
     if (card.resource) parts.push(yieldsToString(card.resource.yieldBonus));
-    if (card.improvement) parts.push(yieldsToString(card.improvement.yields));
-    if (card.district) parts.push(yieldsToString(card.district.baseYields));
     return parts.filter(p => p && p !== '无产出').join(' + ') || '';
   }
 
   private updateTileInfo(coord: HexCoord): void {
     const tile = this.engine.getTileAt(coord);
-    if (!tile) { this.tileInfo.innerHTML = ''; return; }
+    if (!tile) {
+      this.tileInfo.innerHTML = '';
+      return;
+    }
 
     if (!tile.unlocked) {
       this.tileInfo.innerHTML = `
@@ -295,9 +377,15 @@ export class UIManager {
       return;
     }
 
+    const state = this.engine.getState();
     const yields = this.engine.getTileYields(coord);
     const available = this.engine.getAvailableWorkers();
+    const isSelected =
+      this.selectedTileCoord !== null &&
+      this.selectedTileCoord.q === coord.q &&
+      this.selectedTileCoord.r === coord.r;
 
+    // ---- 基础信息 ----
     let html = `
       <div class="info-row">
         <span class="info-label">地形</span>
@@ -313,27 +401,12 @@ export class UIManager {
     }
     if (tile.improvement) {
       html += `<div class="info-row"><span class="info-label">改良</span><span class="info-value">${tile.improvement.icon} ${tile.improvement.name} Lv${tile.improvementLevel}</span></div>`;
-      if (tile.improvementLevel < tile.improvement.maxLevel) {
-        const cost = this.engine.getProductionPerUpgrade();
-        const canUpgrade = this.engine.getState().storedProduction >= cost;
-        html += `<div style="margin-top:4px;font-size:12px;color:${canUpgrade ? 'var(--accent-green)' : 'var(--text-muted)'}">升级: ${cost}⚙️ ${canUpgrade ? '(可升级)' : ''}</div>`;
-      }
     }
     if (tile.district) {
       html += `<div class="info-row"><span class="info-label">区域</span><span class="info-value">${tile.district.icon} ${tile.district.name}</span></div>`;
     }
 
-    // 工作状态
-    if (tile.terrain.id === 'city_center') {
-      html += `<div class="info-section"><div class="info-row"><span class="info-label">状态</span><span class="info-value" style="color:var(--accent-green)">🏛️ 主城（免费工作）</span></div></div>`;
-    } else if (tile.isWorked) {
-      html += `<div class="info-section"><div class="info-row"><span class="info-label">状态</span><span class="info-value" style="color:var(--accent-green)">👷 工作中</span></div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">点击地块可撤回工人</div></div>`;
-    } else {
-      const canAssign = available > 0;
-      html += `<div class="info-section"><div class="info-row"><span class="info-label">状态</span><span class="info-value" style="color:var(--accent-orange)">💤 空闲</span></div><div style="font-size:12px;color:${canAssign ? 'var(--accent-green)' : 'var(--text-muted)'};margin-top:2px">${canAssign ? '点击地块分配工人' : '无空闲工人'}</div></div>`;
-    }
-
-    // 产出（工作中才实际产出，空闲显示潜在产出）
+    // ---- 产出 ----
     html += `
       <div class="info-section">
         <div class="info-row">
@@ -343,20 +416,106 @@ export class UIManager {
       </div>
     `;
 
-    // 邻接规则
+    // ---- 邻接加成 ----
     const adjacencyRules = [
       ...(tile.improvement?.adjacencyRules || []),
       ...(tile.district?.adjacencyRules || []),
     ];
     if (adjacencyRules.length > 0) {
       html += '<div class="info-section"><div class="info-label" style="margin-bottom:4px">邻接加成:</div>';
-      const neighbors = getNeighborTiles(this.engine.getState().board, coord);
+      const neighbors = getNeighborTiles(state.board, coord);
       for (const rule of adjacencyRules) {
         const bonus = calculateAdjacencyBonus(rule, neighbors);
         const bonusStr = yieldsToString(bonus);
         html += `<div class="adjacency-rule">${rule.description} → ${bonusStr !== '无产出' ? bonusStr : '无'}</div>`;
       }
       html += '</div>';
+    }
+
+    // ---- 操作区域（选中时才显示按钮） ----
+    if (tile.terrain.id === 'city_center') {
+      html += `<div class="info-section"><div class="info-row"><span class="info-label">状态</span><span class="info-value" style="color:var(--accent-green)">🏛️ 主城（免费工作）</span></div></div>`;
+    } else if (isSelected) {
+      // 工人管理
+      html += '<div class="info-section">';
+      if (tile.isWorked) {
+        html += `
+          <div class="info-row" style="margin-bottom:4px">
+            <span class="info-label">状态</span>
+            <span class="info-value" style="color:var(--accent-green)">👷 工作中</span>
+          </div>
+          <button class="build-action-btn worker-btn" data-action="unassign-worker">撤回工人</button>
+        `;
+      } else {
+        html += `
+          <div class="info-row" style="margin-bottom:4px">
+            <span class="info-label">状态</span>
+            <span class="info-value" style="color:var(--accent-orange)">💤 空闲</span>
+          </div>
+          <button class="build-action-btn worker-btn" data-action="assign-worker" ${available > 0 ? '' : 'disabled'}>
+            ${available > 0 ? '分配工人' : '无空闲工人'}
+          </button>
+        `;
+      }
+      html += '</div>';
+
+      // 改良升级
+      if (tile.improvement && tile.improvementLevel < tile.improvement.maxLevel) {
+        const upgCost = this.engine.getProductionPerUpgrade();
+        const canUpgrade = state.storedProduction >= upgCost;
+        html += `
+          <div class="info-section">
+            <button class="build-action-btn upgrade-btn" data-action="upgrade-improvement" ${canUpgrade ? '' : 'disabled'}>
+              <span>⬆️ 升级至 Lv${tile.improvementLevel + 1}</span>
+              <span style="color:var(--accent-orange)">${upgCost}⚙️</span>
+            </button>
+          </div>
+        `;
+      }
+
+      // 建造选项
+      const availableImps = this.engine.getAvailableImprovements(coord);
+      const availableDists = this.engine.getAvailableDistricts(coord);
+
+      // 过滤掉已有的同类改良
+      const filteredImps = availableImps.filter(imp => tile.improvement?.id !== imp.id);
+
+      if (filteredImps.length > 0 || availableDists.length > 0) {
+        html += '<div class="info-section"><div class="info-label" style="margin-bottom:6px">🔨 建造</div>';
+
+        for (const imp of filteredImps) {
+          const canBuild = state.storedProduction >= imp.productionCost;
+          html += `
+            <button class="build-action-btn" data-action="build-improvement" data-id="${imp.id}" ${canBuild ? '' : 'disabled'}>
+              <span>${imp.icon} ${imp.name}</span>
+              <span style="color:var(--accent-orange)">${imp.productionCost}⚙️</span>
+            </button>
+          `;
+        }
+
+        for (const dist of availableDists) {
+          const canBuild = state.storedProduction >= dist.productionCost;
+          html += `
+            <button class="build-action-btn" data-action="build-district" data-id="${dist.id}" ${canBuild ? '' : 'disabled'}>
+              <span>${dist.icon} ${dist.name}</span>
+              <span style="color:var(--accent-orange)">${dist.productionCost}⚙️</span>
+            </button>
+          `;
+        }
+
+        html += '</div>';
+      }
+    } else {
+      // 未选中：简单状态提示
+      const statusStr = tile.isWorked
+        ? '<span style="color:var(--accent-green)">👷 工作中</span>'
+        : '<span style="color:var(--accent-orange)">💤 空闲</span>';
+      html += `
+        <div class="info-section">
+          <div class="info-row"><span class="info-label">状态</span><span class="info-value">${statusStr}</span></div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">点击地块进行操作</div>
+        </div>
+      `;
     }
 
     this.tileInfo.innerHTML = html;
@@ -372,7 +531,8 @@ export class UIManager {
       <h2>游戏结束</h2>
       <div class="score-breakdown">
         <div class="score-row"><span>👥 最终人口</span><span>${state.population}</span></div>
-        <div class="score-row"><span>🔬 科技</span><span>${score.science}</span></div>
+        <div class="score-row"><span>🏪 商店等级</span><span>Lv.${state.shopLevel}</span></div>
+        <div class="score-row"><span>🔬 科技（剩余）</span><span>${score.science}</span></div>
         <div class="score-row"><span>🎭 文化</span><span>${score.culture}</span></div>
         <div class="score-row"><span>⛪ 信仰</span><span>${score.faith}</span></div>
         <div class="score-row total"><span>总得分</span><span>${score.total}</span></div>
@@ -381,6 +541,8 @@ export class UIManager {
     `;
 
     document.getElementById('btn-restart')?.addEventListener('click', () => {
+      this.selectedTileCoord = null;
+      this.renderer.setSelectedHex(null);
       this.engine.startNewGame();
       this.gameOverOverlay.classList.remove('visible');
     });

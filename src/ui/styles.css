@@ -211,12 +211,9 @@ body {
   font-weight: bold;
 }
 
-.shop-card .card-type {
+.shop-card .card-tier {
   font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  letter-spacing: 2px;
 }
 
 .shop-card .card-desc {
@@ -229,6 +226,29 @@ body {
   font-size: 12px;
   margin-top: 4px;
   color: var(--text-primary);
+}
+
+/* ============ 商店升级按钮 ============ */
+
+.shop-upgrade-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent-blue);
+  border-radius: 4px;
+  color: var(--accent-blue);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s ease;
+}
+
+.shop-upgrade-btn:hover:not(:disabled) {
+  background: rgba(64, 160, 224, 0.15);
+}
+
+.shop-upgrade-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ============ 信息面板 ============ */
@@ -273,6 +293,44 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
   padding: 2px 0;
+}
+
+/* ============ 建造操作按钮 ============ */
+
+.build-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  margin: 4px 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.build-action-btn:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-blue);
+}
+
+.build-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.build-action-btn.worker-btn {
+  border-color: var(--accent-green);
+  justify-content: center;
+}
+
+.build-action-btn.upgrade-btn {
+  border-color: var(--accent-gold);
 }
 
 /* ============ 底部操作栏 ============ */

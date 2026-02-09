@@ -6,7 +6,8 @@
 
 import type {
   HexCoord,
-  IGameState, IShopCard, IYields
+  IDistrict,
+  IGameState, IImprovement, IShopCard, IYields
 } from '../core/types';
 import { emptyYields } from '../core/yields';
 import {
@@ -15,7 +16,6 @@ import {
   calculateTileYields,
   calculateTotalYields,
   createBoard,
-  getBuildableHexes,
   getEmptyUnlockedHexes,
   getTile,
   getWorkedNonCityCount,
@@ -23,16 +23,20 @@ import {
   unlockNextRing2Hex,
 } from './board';
 import { generateShopCards, resetCardCounter } from './shop';
+import { IMPROVEMENT_REGISTRY } from '../data/improvements';
+import { DISTRICT_REGISTRY } from '../data/districts';
+import { SHOP_LEVEL_CONFIGS } from '../data/card-pool';
 
 // ============ 常量 ============
 
 const MAX_TURNS = 20;
 const INITIAL_GOLD = 10;
-const FOOD_PER_POP = 2;          // 每人口每回合消耗食物
-const GROWTH_THRESHOLD = 8;       // 食物积累到此值增加人口
+const FOOD_PER_POP = 2;
+const GROWTH_THRESHOLD = 8;
 const PRODUCTION_PER_UPGRADE = 10;
 const REROLL_COST = 2;
 const MAX_RING2_UNLOCKS = 12;
+const SHOP_CARD_COUNT = 4;
 
 // ============ 事件系统 ============
 
@@ -43,6 +47,7 @@ export type GameEventType =
   | 'hex_unlocked'
   | 'turn_started'
   | 'population_changed'
+  | 'shop_upgraded'
   | 'game_over';
 
 export type GameEventListener = (event: GameEventType, data?: unknown) => void;
@@ -97,18 +102,16 @@ export class GameEngine {
       phase: 'shopping',
       storedGold: INITIAL_GOLD,
       storedProduction: 0,
-      accumulatedScience: 0,
+      storedScience: 0,
       accumulatedCulture: 0,
       accumulatedFaith: 0,
       perTurnYields: emptyYields(),
-      // 人口系统
       population: 1,
       foodProgress: 0,
       perTurnNetFood: 0,
-      // 商店
+      shopLevel: 1,
       shopCards: [],
       selectedCard: null,
-      // 棋盘
       board: createBoard(),
       unlockedRing2Count: 0,
     };
@@ -126,14 +129,14 @@ export class GameEngine {
   private startTurn(): void {
     this.state.turn++;
 
-    // 1. 产出结算（只计算工作中的地块）
+    // 1. 产出结算
     this.collectYields();
 
-    // 2. 人口增减检查
+    // 2. 人口增减
     this.checkPopulationGrowth();
 
-    // 3. 刷新商店
-    this.state.shopCards = generateShopCards(2, 1, 1);
+    // 3. 刷新商店（根据商店等级）
+    this.state.shopCards = generateShopCards(SHOP_CARD_COUNT, this.state.shopLevel);
     this.state.selectedCard = null;
 
     // 4. 进入购物阶段
@@ -143,7 +146,7 @@ export class GameEngine {
     this.emit('state_changed');
   }
 
-  /** 结算产出（只有工作中的地块贡献） */
+  /** 结算产出 */
   private collectYields(): void {
     const yields = calculateTotalYields(this.state.board);
     this.state.perTurnYields = yields;
@@ -152,12 +155,14 @@ export class GameEngine {
     this.state.storedGold += yields.gold;
     this.state.storedProduction += yields.production;
 
+    // 科技（可花费型，剩余计入得分）
+    this.state.storedScience += yields.science;
+
     // 得分型
-    this.state.accumulatedScience += yields.science;
     this.state.accumulatedCulture += yields.culture;
     this.state.accumulatedFaith += yields.faith;
 
-    // 食物: 总产出 - 人口消耗
+    // 食物
     const grossFood = yields.food;
     const consumption = this.state.population * FOOD_PER_POP;
     const netFood = grossFood - consumption;
@@ -167,27 +172,21 @@ export class GameEngine {
 
   /** 人口增减 */
   private checkPopulationGrowth(): void {
-    // 增长: 食物盈余达到阈值
     while (this.state.foodProgress >= GROWTH_THRESHOLD) {
       this.state.foodProgress -= GROWTH_THRESHOLD;
       this.state.population++;
-      // 新人口自动分配到最佳地块
       autoAssignBestWorker(this.state.board);
-      // 人口增长可能解锁 Ring-2
       this.checkRing2Unlock();
       this.emit('population_changed');
     }
 
-    // 饥荒: 食物赤字时减少人口
     while (this.state.foodProgress < 0 && this.state.population > 1) {
       this.state.population--;
-      this.state.foodProgress = 0; // 重置，不累积负值
-      // 自动撤回最差地块的工人
+      this.state.foodProgress = 0;
       autoUnassignWorstWorker(this.state.board);
       this.emit('population_changed');
     }
 
-    // 最低人口1，不再扣食物
     if (this.state.foodProgress < 0) {
       this.state.foodProgress = 0;
     }
@@ -195,7 +194,6 @@ export class GameEngine {
 
   /** 根据人口解锁 Ring-2 格子 */
   private checkRing2Unlock(): void {
-    // 每增加1人口(超过初始1)，解锁1个 Ring-2 格子
     const shouldUnlock = Math.max(0, this.state.population - 1);
     while (
       this.state.unlockedRing2Count < shouldUnlock &&
@@ -220,7 +218,6 @@ export class GameEngine {
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.terrain || tile.isWorked) return false;
     if (tile.terrain.id === 'city_center') return false;
-
     if (this.getAvailableWorkers() <= 0) return false;
 
     tile.isWorked = true;
@@ -241,7 +238,7 @@ export class GameEngine {
     return true;
   }
 
-  /** 刷新每回合产出快照（用于UI展示） */
+  /** 刷新每回合产出快照 */
   private refreshYieldSnapshot(): void {
     const yields = calculateTotalYields(this.state.board);
     this.state.perTurnYields = yields;
@@ -250,7 +247,7 @@ export class GameEngine {
     this.state.perTurnNetFood = grossFood - consumption;
   }
 
-  // -------- 商店操作 --------
+  // -------- 商店操作（购买地块卡牌） --------
 
   /** 选择一张商店卡牌 */
   selectCard(card: IShopCard): boolean {
@@ -270,83 +267,31 @@ export class GameEngine {
     this.emit('state_changed');
   }
 
-  /** 获取当前选中卡牌的有效放置位置 */
+  /** 获取当前选中卡牌的有效放置位置（仅空地） */
   getValidPlacements(): HexCoord[] {
-    const card = this.state.selectedCard;
-    if (!card) return [];
-
-    if (card.type === 'terrain') {
-      return getEmptyUnlockedHexes(this.state.board);
-    }
-
-    const buildable = getBuildableHexes(this.state.board);
-    return buildable.filter(coord => this.canPlaceOnTile(card, coord));
+    if (!this.state.selectedCard) return [];
+    return getEmptyUnlockedHexes(this.state.board);
   }
 
-  /** 检查卡牌是否能放在指定格子 */
-  private canPlaceOnTile(card: IShopCard, coord: HexCoord): boolean {
-    const tile = getTile(this.state.board, coord);
-    if (!tile || !tile.terrain) return false;
-
-    if (card.type === 'terrain') {
-      return tile.terrain === null && tile.unlocked;
-    }
-
-    if (card.type === 'improvement' && card.improvement) {
-      for (const reqTag of card.improvement.placementRequireTags) {
-        if (!tileHasTag(tile, reqTag)) return false;
-      }
-      return true;
-    }
-
-    if (card.type === 'district' && card.district) {
-      for (const reqTag of card.district.placementRequireTags) {
-        if (!tileHasTag(tile, reqTag)) return false;
-      }
-      return true;
-    }
-
-    return false;
-  }
-
-  /** 在指定位置放置选中的卡牌 */
+  /** 放置选中的地块卡牌 */
   placeCard(coord: HexCoord): boolean {
     const card = this.state.selectedCard;
     if (!card) return false;
     if (this.state.storedGold < card.cost) return false;
 
     const tile = getTile(this.state.board, coord);
-    if (!tile) return false;
+    if (!tile || tile.terrain !== null || !tile.unlocked) return false;
 
-    if (card.type === 'terrain') {
-      if (tile.terrain !== null || !tile.unlocked) return false;
+    tile.terrain = card.terrain;
+    tile.feature = card.feature || null;
+    tile.resource = card.resource || null;
 
-      tile.terrain = card.terrain || null;
-      tile.feature = card.feature || null;
-      tile.resource = card.resource || null;
-
-      // 如果有可用工人，自动分配到新地块
-      if (this.getAvailableWorkers() > 0 && tile.terrain) {
-        tile.isWorked = true;
-      }
-    } else if (card.type === 'improvement' && card.improvement) {
-      if (!this.canPlaceOnTile(card, coord)) return false;
-      tile.improvement = card.improvement;
-      tile.improvementLevel = 1;
-      tile.district = null;
-    } else if (card.type === 'district' && card.district) {
-      if (!this.canPlaceOnTile(card, coord)) return false;
-      tile.district = card.district;
-      tile.improvement = null;
-      tile.improvementLevel = 0;
-    } else {
-      return false;
+    // 自动分配工人
+    if (this.getAvailableWorkers() > 0 && tile.terrain) {
+      tile.isWorked = true;
     }
 
-    // 扣除金币
     this.state.storedGold -= card.cost;
-
-    // 从商店移除
     this.state.shopCards = this.state.shopCards.filter(
       c => c.instanceId !== card.instanceId
     );
@@ -359,20 +304,76 @@ export class GameEngine {
     return true;
   }
 
-  /** 刷新商店（花费金币） */
+  /** 刷新商店 */
   rerollShop(): boolean {
     if (this.state.phase !== 'shopping') return false;
     if (this.state.storedGold < REROLL_COST) return false;
 
     this.state.storedGold -= REROLL_COST;
-    this.state.shopCards = generateShopCards(2, 1, 1);
+    this.state.shopCards = generateShopCards(SHOP_CARD_COUNT, this.state.shopLevel);
     this.state.selectedCard = null;
 
     this.emit('state_changed');
     return true;
   }
 
-  /** 升级地块改良设施 */
+  // -------- 建造系统（消耗生产力） --------
+
+  /** 在指定地块建造改良设施 */
+  buildImprovement(coord: HexCoord, improvementId: string): boolean {
+    const improvement = IMPROVEMENT_REGISTRY[improvementId];
+    if (!improvement) return false;
+
+    const tile = getTile(this.state.board, coord);
+    if (!tile || !tile.terrain) return false;
+    if (tile.district) return false;
+    if (tile.terrain.id === 'city_center') return false;
+
+    // 检查放置条件
+    for (const reqTag of improvement.placementRequireTags) {
+      if (!tileHasTag(tile, reqTag)) return false;
+    }
+
+    if (this.state.storedProduction < improvement.productionCost) return false;
+
+    this.state.storedProduction -= improvement.productionCost;
+    tile.improvement = improvement;
+    tile.improvementLevel = 1;
+
+    this.refreshYieldSnapshot();
+    this.emit('tile_placed', coord);
+    this.emit('state_changed');
+    return true;
+  }
+
+  /** 在指定地块建造区域（替换已有改良） */
+  buildDistrict(coord: HexCoord, districtId: string): boolean {
+    const district = DISTRICT_REGISTRY[districtId];
+    if (!district) return false;
+
+    const tile = getTile(this.state.board, coord);
+    if (!tile || !tile.terrain) return false;
+    if (tile.district) return false;
+    if (tile.terrain.id === 'city_center') return false;
+
+    for (const reqTag of district.placementRequireTags) {
+      if (!tileHasTag(tile, reqTag)) return false;
+    }
+
+    if (this.state.storedProduction < district.productionCost) return false;
+
+    this.state.storedProduction -= district.productionCost;
+    tile.district = district;
+    tile.improvement = null;
+    tile.improvementLevel = 0;
+
+    this.refreshYieldSnapshot();
+    this.emit('tile_placed', coord);
+    this.emit('state_changed');
+    return true;
+  }
+
+  /** 升级已有改良设施 */
   upgradeTile(coord: HexCoord): boolean {
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.improvement) return false;
@@ -386,6 +387,31 @@ export class GameEngine {
     this.emit('tile_upgraded', coord);
     this.emit('state_changed');
     return true;
+  }
+
+  // -------- 商店升级（消耗科技） --------
+
+  /** 升级商店等级 */
+  upgradeShop(): boolean {
+    const nextLevel = this.state.shopLevel + 1;
+    const config = SHOP_LEVEL_CONFIGS.find(c => c.level === nextLevel);
+    if (!config) return false;
+
+    if (this.state.storedScience < config.upgradeCost) return false;
+
+    this.state.storedScience -= config.upgradeCost;
+    this.state.shopLevel = nextLevel;
+
+    this.emit('shop_upgraded');
+    this.emit('state_changed');
+    return true;
+  }
+
+  /** 获取下一级商店升级费用（null表示已满级） */
+  getShopUpgradeCost(): number | null {
+    const nextLevel = this.state.shopLevel + 1;
+    const config = SHOP_LEVEL_CONFIGS.find(c => c.level === nextLevel);
+    return config ? config.upgradeCost : null;
   }
 
   /** 结束回合 */
@@ -407,10 +433,38 @@ export class GameEngine {
   // -------- 得分 --------
 
   getFinalScore(): { science: number; culture: number; faith: number; total: number } {
-    const science = this.state.accumulatedScience;
+    const science = this.state.storedScience;
     const culture = this.state.accumulatedCulture;
     const faith = this.state.accumulatedFaith;
     return { science, culture, faith, total: science + culture + faith };
+  }
+
+  // -------- 建造查询 --------
+
+  /** 获取指定地块可建造的改良列表 */
+  getAvailableImprovements(coord: HexCoord): IImprovement[] {
+    const tile = getTile(this.state.board, coord);
+    if (!tile || !tile.terrain || tile.district || tile.terrain.id === 'city_center') return [];
+
+    return Object.values(IMPROVEMENT_REGISTRY).filter(imp => {
+      for (const reqTag of imp.placementRequireTags) {
+        if (!tileHasTag(tile, reqTag)) return false;
+      }
+      return true;
+    });
+  }
+
+  /** 获取指定地块可建造的区域列表 */
+  getAvailableDistricts(coord: HexCoord): IDistrict[] {
+    const tile = getTile(this.state.board, coord);
+    if (!tile || !tile.terrain || tile.district || tile.terrain.id === 'city_center') return [];
+
+    return Object.values(DISTRICT_REGISTRY).filter(dist => {
+      for (const reqTag of dist.placementRequireTags) {
+        if (!tileHasTag(tile, reqTag)) return false;
+      }
+      return true;
+    });
   }
 
   // -------- 常量访问 --------

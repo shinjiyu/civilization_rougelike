@@ -88,6 +88,8 @@ export interface IImprovement {
   placementRequireTags: string[];
   tags: string[];
   icon: string;
+  /** 建造所需生产力 */
+  productionCost: number;
 }
 
 // ============ 区域 ============
@@ -100,6 +102,8 @@ export interface IDistrict {
   placementRequireTags: string[];
   tags: string[];
   icon: string;
+  /** 建造所需生产力 */
+  productionCost: number;
 }
 
 // ============ 地块（棋盘格子） ============
@@ -117,26 +121,20 @@ export interface ITile {
   isWorked: boolean;
 }
 
-// ============ 商店卡牌 ============
-
-export type CardType = 'terrain' | 'improvement' | 'district';
+// ============ 商店卡牌（仅地块） ============
 
 export interface IShopCard {
   /** 唯一实例ID（每次生成不同） */
   instanceId: string;
-  type: CardType;
   name: string;
   description: string;
   cost: number;
   icon: string;
-  /** 地形卡数据 */
-  terrain?: ITerrain;
+  tier: number;
+  /** 地形数据 */
+  terrain: ITerrain;
   feature?: IFeature;
   resource?: IResource;
-  /** 改良卡数据 */
-  improvement?: IImprovement;
-  /** 区域卡数据 */
-  district?: IDistrict;
 }
 
 // ============ 游戏状态 ============
@@ -151,9 +149,10 @@ export interface IGameState {
   // 存储资源（可花费的）
   storedGold: number;
   storedProduction: number;
+  /** 科技：可花费（升级商店），剩余计入终分 */
+  storedScience: number;
 
   // 累积得分（只增不减）
-  accumulatedScience: number;
   accumulatedCulture: number;
   accumulatedFaith: number;
 
@@ -162,10 +161,11 @@ export interface IGameState {
 
   // 人口系统
   population: number;
-  /** 累积的净食物（朝下一次人口增长） */
   foodProgress: number;
-  /** 每回合净食物（UI展示用: 总产出 - 消耗） */
   perTurnNetFood: number;
+
+  // 商店等级
+  shopLevel: number;
 
   // 商店
   shopCards: IShopCard[];
@@ -178,18 +178,26 @@ export interface IGameState {
   unlockedRing2Count: number;
 }
 
-// ============ 卡牌模板（用于卡池定义） ============
+// ============ 卡牌模板（用于卡池定义，仅地块） ============
 
 export interface ICardTemplate {
-  type: CardType;
   name: string;
   cost: number;
   icon: string;
   weight: number;
+  tier: 1 | 2 | 3;
   description: string;
-  terrainId?: string;
+  terrainId: string;
   featureId?: string;
   resourceId?: string;
-  improvementId?: string;
-  districtId?: string;
+}
+
+// ============ 商店等级配置 ============
+
+export interface IShopLevelConfig {
+  level: number;
+  /** [tier1%, tier2%, tier3%] 概率权重 */
+  tierWeights: [number, number, number];
+  /** 升级到此等级的科技费用（level 1 为 0） */
+  upgradeCost: number;
 }

@@ -1,6 +1,7 @@
 /**
  * 区域数据定义
  * 纯数据，不含逻辑
+ * 区域通过消耗生产力在地块上建造
  */
 
 import type { IDistrict } from '../core/types';
@@ -32,6 +33,7 @@ export const CAMPUS: IDistrict = {
   placementRequireTags: ['buildable'],
   tags: ['campus', 'district', 'science_district'],
   icon: '🔬',
+  productionCost: 15,
 };
 
 export const COMMERCIAL_HUB: IDistrict = {
@@ -55,6 +57,7 @@ export const COMMERCIAL_HUB: IDistrict = {
   placementRequireTags: ['buildable'],
   tags: ['commercial_hub', 'district', 'gold_district'],
   icon: '💰',
+  productionCost: 15,
 };
 
 export const HOLY_SITE: IDistrict = {
@@ -78,6 +81,7 @@ export const HOLY_SITE: IDistrict = {
   placementRequireTags: ['buildable'],
   tags: ['holy_site', 'district', 'faith_district'],
   icon: '⛪',
+  productionCost: 15,
 };
 
 export const THEATER_SQUARE: IDistrict = {
@@ -95,6 +99,7 @@ export const THEATER_SQUARE: IDistrict = {
   placementRequireTags: ['buildable'],
   tags: ['theater_square', 'district', 'culture_district'],
   icon: '🎭',
+  productionCost: 15,
 };
 
 export const INDUSTRIAL_ZONE: IDistrict = {
@@ -118,6 +123,7 @@ export const INDUSTRIAL_ZONE: IDistrict = {
   placementRequireTags: ['buildable'],
   tags: ['industrial_zone', 'district', 'production_district'],
   icon: '🏭',
+  productionCost: 15,
 };
 
 /** 所有区域 registry */

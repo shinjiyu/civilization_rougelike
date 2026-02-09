@@ -1,12 +1,10 @@
 /**
  * 商店逻辑
- * 从卡池中按权重随机抽取卡牌
+ * 根据商店等级，按等级概率生成地块卡牌
  */
 
 import type { ICardTemplate, IShopCard } from '../core/types';
-import { DISTRICT_CARDS, IMPROVEMENT_CARDS, TERRAIN_CARDS } from '../data/card-pool';
-import { DISTRICT_REGISTRY } from '../data/districts';
-import { IMPROVEMENT_REGISTRY } from '../data/improvements';
+import { CARD_POOL_BY_TIER, SHOP_LEVEL_CONFIGS } from '../data/card-pool';
 import { FEATURE_REGISTRY, RESOURCE_REGISTRY, TERRAIN_REGISTRY } from '../data/terrains';
 
 let cardIdCounter = 0;
@@ -16,87 +14,91 @@ function nextCardId(): string {
   return `card_${++cardIdCounter}`;
 }
 
-/** 按权重从数组中随机抽取一个（不放回） */
-function weightedPick<T extends { weight: number }>(pool: T[]): { picked: T; remaining: T[] } {
+/** 按权重从数组中随机抽取一个 */
+function weightedPick<T extends { weight: number }>(pool: T[]): T {
   const totalWeight = pool.reduce((sum, item) => sum + item.weight, 0);
   let roll = Math.random() * totalWeight;
 
   for (let i = 0; i < pool.length; i++) {
     roll -= pool[i].weight;
-    if (roll <= 0) {
-      const picked = pool[i];
-      const remaining = [...pool.slice(0, i), ...pool.slice(i + 1)];
-      return { picked, remaining };
-    }
+    if (roll <= 0) return pool[i];
   }
 
-  // fallback
-  const picked = pool[pool.length - 1];
-  const remaining = pool.slice(0, -1);
-  return { picked, remaining };
+  return pool[pool.length - 1];
 }
 
-/** 从模板池中抽取N张不重复的卡 */
-function drawFromPool(pool: ICardTemplate[], count: number): ICardTemplate[] {
-  const result: ICardTemplate[] = [];
-  let remaining = [...pool];
+/** 根据商店等级的权重配置，随机选一个等级 */
+function rollTier(shopLevel: number): number {
+  const config = SHOP_LEVEL_CONFIGS.find(c => c.level === shopLevel);
+  if (!config) return 1;
 
-  for (let i = 0; i < count && remaining.length > 0; i++) {
-    const { picked, remaining: newRemaining } = weightedPick(remaining);
-    result.push(picked);
-    remaining = newRemaining;
-  }
+  const [w1, w2, w3] = config.tierWeights;
+  const total = w1 + w2 + w3;
+  const roll = Math.random() * total;
 
-  return result;
+  if (roll < w1) return 1;
+  if (roll < w1 + w2) return 2;
+  return 3;
 }
 
 /** 将卡牌模板解析为完整的 ShopCard */
 function resolveTemplate(template: ICardTemplate): IShopCard {
+  const terrain = TERRAIN_REGISTRY[template.terrainId];
+  if (!terrain) {
+    throw new Error(`Unknown terrain: ${template.terrainId}`);
+  }
+
   const card: IShopCard = {
     instanceId: nextCardId(),
-    type: template.type,
     name: template.name,
     description: template.description,
     cost: template.cost,
     icon: template.icon,
+    tier: template.tier,
+    terrain,
   };
 
-  if (template.terrainId) {
-    card.terrain = TERRAIN_REGISTRY[template.terrainId];
-  }
   if (template.featureId) {
     card.feature = FEATURE_REGISTRY[template.featureId];
   }
   if (template.resourceId) {
     card.resource = RESOURCE_REGISTRY[template.resourceId];
   }
-  if (template.improvementId) {
-    card.improvement = IMPROVEMENT_REGISTRY[template.improvementId];
-  }
-  if (template.districtId) {
-    card.district = DISTRICT_REGISTRY[template.districtId];
-  }
 
   return card;
 }
 
 /**
- * 生成本回合的商店卡牌
- * @param terrainCount 地形卡数量
- * @param improvementCount 改良卡数量
- * @param districtCount 区域卡数量
+ * 生成本回合的商店卡牌（仅地块）
+ * @param count 生成卡牌数
+ * @param shopLevel 商店等级（影响等级出现概率）
  */
 export function generateShopCards(
-  terrainCount: number = 2,
-  improvementCount: number = 1,
-  districtCount: number = 1
+  count: number = 4,
+  shopLevel: number = 1
 ): IShopCard[] {
-  const terrainTemplates = drawFromPool(TERRAIN_CARDS, terrainCount);
-  const improvementTemplates = drawFromPool(IMPROVEMENT_CARDS, improvementCount);
-  const districtTemplates = drawFromPool(DISTRICT_CARDS, districtCount);
+  const results: IShopCard[] = [];
+  const usedNames = new Set<string>();
 
-  const allTemplates = [...terrainTemplates, ...improvementTemplates, ...districtTemplates];
-  return allTemplates.map(resolveTemplate);
+  for (let i = 0; i < count; i++) {
+    const tier = rollTier(shopLevel);
+    let pool = (CARD_POOL_BY_TIER[tier] || CARD_POOL_BY_TIER[1])
+      .filter(t => !usedNames.has(t.name));
+
+    // 该等级没卡了，从所有等级中兜底
+    if (pool.length === 0) {
+      pool = Object.values(CARD_POOL_BY_TIER)
+        .flat()
+        .filter(t => !usedNames.has(t.name));
+      if (pool.length === 0) break;
+    }
+
+    const picked = weightedPick(pool);
+    usedNames.add(picked.name);
+    results.push(resolveTemplate(picked));
+  }
+
+  return results;
 }
 
 /** 重置卡牌ID计数器（新游戏时调用） */

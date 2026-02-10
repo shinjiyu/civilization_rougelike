@@ -4,13 +4,22 @@
  * 不依赖任何 UI/DOM
  */
 
+import type { IGameConfig } from '../core/config';
+import { DEFAULT_CONFIG } from '../core/config';
+import { hexNeighbors } from '../core/hex';
 import type {
   HexCoord,
   IDistrict,
-  IGameState, IImprovement, IShopCard, IYields
+  IGameState, IImprovement, IItemDef, IShopCard, ItemPool, IYields
 } from '../core/types';
-import { emptyYields } from '../core/yields';
+import { addYields, emptyYields, scaleYields } from '../core/yields';
+import { SHOP_LEVEL_CONFIGS } from '../data/card-pool';
+import { DISTRICT_REGISTRY } from '../data/districts';
+import { IMPROVEMENT_REGISTRY } from '../data/improvements';
+import { ALL_ITEMS, EUREKA_DEFS, ITEM_POOL } from '../data/items';
+import { FEATURE_REGISTRY, RESOURCE_REGISTRY, TERRAIN_REGISTRY } from '../data/terrains';
 import {
+  autoAssignBestFoodWorker,
   autoAssignBestWorker,
   autoUnassignWorstWorker,
   calculateTileYields,
@@ -20,23 +29,9 @@ import {
   getTile,
   getWorkedNonCityCount,
   tileHasTag,
-  unlockNextRing2Hex,
+  unlockNextOuterHex,
 } from './board';
-import { generateShopCards, resetCardCounter } from './shop';
-import { IMPROVEMENT_REGISTRY } from '../data/improvements';
-import { DISTRICT_REGISTRY } from '../data/districts';
-import { SHOP_LEVEL_CONFIGS } from '../data/card-pool';
-
-// ============ 常量 ============
-
-const MAX_TURNS = 20;
-const INITIAL_GOLD = 10;
-const FOOD_PER_POP = 2;
-const GROWTH_THRESHOLD = 8;
-const PRODUCTION_PER_UPGRADE = 10;
-const REROLL_COST = 2;
-const MAX_RING2_UNLOCKS = 12;
-const SHOP_CARD_COUNT = 4;
+import { generateShopCards, resetCardCounter, setCardCounter } from './shop';
 
 // ============ 事件系统 ============
 
@@ -48,6 +43,8 @@ export type GameEventType =
   | 'turn_started'
   | 'population_changed'
   | 'shop_upgraded'
+  | 'eureka_triggered'
+  | 'item_acquired'
   | 'game_over';
 
 export type GameEventListener = (event: GameEventType, data?: unknown) => void;
@@ -56,9 +53,11 @@ export type GameEventListener = (event: GameEventType, data?: unknown) => void;
 
 export class GameEngine {
   private state: IGameState;
+  private config: IGameConfig;
   private listeners: GameEventListener[] = [];
 
-  constructor() {
+  constructor(config?: Partial<IGameConfig>) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
     this.state = this.createInitialState();
   }
 
@@ -84,6 +83,207 @@ export class GameEngine {
     return this.state;
   }
 
+  getConfig(): Readonly<IGameConfig> {
+    return this.config;
+  }
+
+  // -------- 存档系统 --------
+
+  private static readonly SAVE_KEY = 'civ6_roguelike_save';
+
+  /** 序列化当前游戏状态为 JSON 字符串 */
+  serializeState(): string {
+    const s = this.state;
+
+    // 序列化棋盘: Map → Array<[key, serialized tile]>
+    const boardArr: [string, {
+      q: number; r: number;
+      terrainId: string | null; featureId: string | null; resourceId: string | null;
+      improvementId: string | null; improvementLevel: number;
+      districtId: string | null;
+      unlocked: boolean; isWorked: boolean;
+      goldInvested: number; productionInvested: number; ring: number;
+    }][] = [];
+
+    for (const [key, tile] of s.board) {
+      boardArr.push([key, {
+        q: tile.coord.q, r: tile.coord.r,
+        terrainId: tile.terrain?.id ?? null,
+        featureId: tile.feature?.id ?? null,
+        resourceId: tile.resource?.id ?? null,
+        improvementId: tile.improvement?.id ?? null,
+        improvementLevel: tile.improvementLevel,
+        districtId: tile.district?.id ?? null,
+        unlocked: tile.unlocked,
+        isWorked: tile.isWorked,
+        goldInvested: tile.goldInvested,
+        productionInvested: tile.productionInvested,
+        ring: tile.ring,
+      }]);
+    }
+
+    // 序列化商店卡牌
+    const shopCards = s.shopCards.map(c => ({
+      instanceId: c.instanceId,
+      name: c.name,
+      description: c.description,
+      cost: c.cost,
+      icon: c.icon,
+      tier: c.tier,
+      terrainId: c.terrain.id,
+      featureId: c.feature?.id,
+      resourceId: c.resource?.id,
+    }));
+
+    // 序列化道具 (保存 id 列表，可能重复)
+    const itemIds = s.items.map(item => item.id);
+
+    return JSON.stringify({
+      version: 1,
+      turn: s.turn,
+      maxTurns: s.maxTurns,
+      phase: s.phase,
+      storedGold: s.storedGold,
+      storedProduction: s.storedProduction,
+      storedScience: s.storedScience,
+      accumulatedCulture: s.accumulatedCulture,
+      accumulatedFaith: s.accumulatedFaith,
+      perTurnYields: s.perTurnYields,
+      population: s.population,
+      foodProgress: s.foodProgress,
+      perTurnNetFood: s.perTurnNetFood,
+      shopLevel: s.shopLevel,
+      shopCards,
+      shopCardLocks: s.shopCardLocks,
+      board: boardArr,
+      unlockedOuterCount: s.unlockedOuterCount,
+      itemIds,
+      eurekaTriggered: s.eurekaTriggered,
+      freeItemShopEntries: s.freeItemShopEntries,
+      config: this.config,
+    });
+  }
+
+  /** 从 JSON 恢复游戏状态，成功返回 true */
+  restoreFromSave(json: string): boolean {
+    try {
+      const data = JSON.parse(json);
+      if (!data || data.version !== 1) return false;
+
+      // 恢复配置
+      if (data.config) {
+        this.config = { ...DEFAULT_CONFIG, ...data.config };
+      }
+
+      // 恢复棋盘
+      const board = new Map<string, import('../core/types').ITile>();
+      for (const [key, st] of data.board as [string, any][]) {
+        board.set(key, {
+          coord: { q: st.q, r: st.r },
+          terrain: st.terrainId ? TERRAIN_REGISTRY[st.terrainId] ?? null : null,
+          feature: st.featureId ? FEATURE_REGISTRY[st.featureId] ?? null : null,
+          resource: st.resourceId ? RESOURCE_REGISTRY[st.resourceId] ?? null : null,
+          improvement: st.improvementId ? IMPROVEMENT_REGISTRY[st.improvementId] ?? null : null,
+          improvementLevel: st.improvementLevel || 0,
+          district: st.districtId ? DISTRICT_REGISTRY[st.districtId] ?? null : null,
+          unlocked: st.unlocked,
+          isWorked: st.isWorked,
+          goldInvested: st.goldInvested || 0,
+          productionInvested: st.productionInvested || 0,
+          ring: st.ring || 0,
+        });
+      }
+
+      // 恢复商店卡牌
+      let maxCardId = 0;
+      const shopCards: IShopCard[] = (data.shopCards || []).map((sc: any) => {
+        const num = parseInt(sc.instanceId?.replace('card_', '') || '0');
+        if (num > maxCardId) maxCardId = num;
+        return {
+          instanceId: sc.instanceId,
+          name: sc.name,
+          description: sc.description,
+          cost: sc.cost,
+          icon: sc.icon,
+          tier: sc.tier,
+          terrain: TERRAIN_REGISTRY[sc.terrainId],
+          feature: sc.featureId ? FEATURE_REGISTRY[sc.featureId] : undefined,
+          resource: sc.resourceId ? RESOURCE_REGISTRY[sc.resourceId] : undefined,
+        } as IShopCard;
+      }).filter((c: IShopCard) => c.terrain); // 过滤掉无法解析的卡
+      setCardCounter(maxCardId);
+
+      // 恢复道具
+      const itemMap = new Map<string, IItemDef>();
+      for (const item of ALL_ITEMS) {
+        itemMap.set(item.id, item);
+      }
+      const items: IItemDef[] = (data.itemIds || [])
+        .map((id: string) => itemMap.get(id))
+        .filter(Boolean) as IItemDef[];
+
+      // 组装状态
+      this.state = {
+        turn: data.turn,
+        maxTurns: data.maxTurns,
+        phase: data.phase,
+        storedGold: data.storedGold,
+        storedProduction: data.storedProduction,
+        storedScience: data.storedScience,
+        accumulatedCulture: data.accumulatedCulture,
+        accumulatedFaith: data.accumulatedFaith,
+        perTurnYields: data.perTurnYields || emptyYields(),
+        population: data.population,
+        foodProgress: data.foodProgress,
+        perTurnNetFood: data.perTurnNetFood || 0,
+        shopLevel: data.shopLevel,
+        shopCards,
+        shopCardLocks: data.shopCardLocks || [],
+        selectedCard: null,
+        board,
+        unlockedOuterCount: data.unlockedOuterCount || 0,
+        items,
+        eurekaTriggered: data.eurekaTriggered || [],
+        freeItemShopEntries: data.freeItemShopEntries || [],
+      };
+
+      this.refreshYieldSnapshot();
+      this.emit('state_changed');
+      return true;
+    } catch (e) {
+      console.warn('Failed to restore save:', e);
+      return false;
+    }
+  }
+
+  /** 保存到 localStorage */
+  saveToStorage(): void {
+    try {
+      localStorage.setItem(GameEngine.SAVE_KEY, this.serializeState());
+    } catch (e) {
+      console.warn('Failed to save game:', e);
+    }
+  }
+
+  /** 从 localStorage 加载并恢复 */
+  loadFromStorage(): boolean {
+    try {
+      const json = localStorage.getItem(GameEngine.SAVE_KEY);
+      if (!json) return false;
+      return this.restoreFromSave(json);
+    } catch (e) {
+      console.warn('Failed to load save:', e);
+      return false;
+    }
+  }
+
+  /** 清除 localStorage 存档 */
+  static clearSave(): void {
+    try {
+      localStorage.removeItem(GameEngine.SAVE_KEY);
+    } catch (_) { /* ignore */ }
+  }
+
   getTileAt(coord: HexCoord) {
     return getTile(this.state.board, coord);
   }
@@ -92,15 +292,100 @@ export class GameEngine {
     return calculateTileYields(this.state.board, coord);
   }
 
+  /**
+   * 计算道具对单个地块的加成
+   * - per_tag: 如果此地块匹配 tag，返回该道具提供的加成
+   * - yield_percent: 按百分比增幅此地块的基础产出
+   * （flat_per_turn 是全局加成，不归属于单个地块）
+   */
+  getItemBonusForTile(coord: HexCoord): IYields {
+    const tile = getTile(this.state.board, coord);
+    if (!tile || !tile.terrain || !tile.isWorked) return emptyYields();
+
+    const baseYields = calculateTileYields(this.state.board, coord);
+    let bonus = emptyYields();
+
+    // Pass 1: per_tag bonuses attributable to this tile
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'per_tag' && effect.matchTag && effect.yields) {
+          if (tileHasTag(tile, effect.matchTag)) {
+            const ey = effect.yields;
+            bonus = addYields(bonus, {
+              gold: ey.gold || 0,
+              food: ey.food || 0,
+              production: ey.production || 0,
+              science: ey.science || 0,
+              culture: ey.culture || 0,
+              faith: ey.faith || 0,
+            });
+          }
+        }
+      }
+    }
+
+    // Pass 2: yield_percent (线性加合后一次性作用于此地块基础产出)
+    const pctBonuses: Partial<Record<keyof IYields, number>> = {};
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'yield_percent' && effect.yieldKey && effect.percent) {
+          pctBonuses[effect.yieldKey] = (pctBonuses[effect.yieldKey] || 0) + effect.percent;
+        }
+      }
+    }
+    for (const [key, pct] of Object.entries(pctBonuses) as [keyof IYields, number][]) {
+      if (pct > 0) {
+        const pctBonus = Math.floor(baseYields[key] * pct / 100);
+        if (pctBonus > 0) {
+          const b = emptyYields();
+          b[key] = pctBonus;
+          bonus = addYields(bonus, b);
+        }
+      }
+    }
+
+    return bonus;
+  }
+
+  /**
+   * 获取全局道具加成（flat_per_turn，不归属于单个地块）
+   */
+  getGlobalItemBonus(): IYields {
+    let bonus = emptyYields();
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'flat_per_turn' && effect.yields) {
+          const ey = effect.yields;
+          bonus = addYields(bonus, {
+            gold: ey.gold || 0,
+            food: ey.food || 0,
+            production: ey.production || 0,
+            science: ey.science || 0,
+            culture: ey.culture || 0,
+            faith: ey.faith || 0,
+          });
+        }
+      }
+    }
+    return bonus;
+  }
+
+  /** 获取地块总有效产出（基础 + 道具加成） */
+  getTileEffectiveYields(coord: HexCoord): IYields {
+    const base = calculateTileYields(this.state.board, coord);
+    const itemBonus = this.getItemBonusForTile(coord);
+    return addYields(base, itemBonus);
+  }
+
   // -------- 游戏初始化 --------
 
   private createInitialState(): IGameState {
     resetCardCounter();
     return {
       turn: 0,
-      maxTurns: MAX_TURNS,
+      maxTurns: this.config.maxTurns,
       phase: 'shopping',
-      storedGold: INITIAL_GOLD,
+      storedGold: this.config.initialGold,
       storedProduction: 0,
       storedScience: 0,
       accumulatedCulture: 0,
@@ -111,14 +396,21 @@ export class GameEngine {
       perTurnNetFood: 0,
       shopLevel: 1,
       shopCards: [],
+      shopCardLocks: [],
       selectedCard: null,
       board: createBoard(),
-      unlockedRing2Count: 0,
+      unlockedOuterCount: 0,
+      items: [],
+      eurekaTriggered: [],
+      freeItemShopEntries: [],
     };
   }
 
-  /** 开始新游戏 */
-  startNewGame(): void {
+  /** 开始新游戏（可选传入新配置，用于设置面板更新后重新开始） */
+  startNewGame(newConfig?: Partial<IGameConfig>): void {
+    if (newConfig) {
+      this.config = { ...DEFAULT_CONFIG, ...newConfig };
+    }
     this.state = this.createInitialState();
     this.startTurn();
   }
@@ -129,26 +421,71 @@ export class GameEngine {
   private startTurn(): void {
     this.state.turn++;
 
-    // 1. 产出结算
+    // 1. 产出结算（含道具效果）
     this.collectYields();
 
     // 2. 人口增减
     this.checkPopulationGrowth();
 
-    // 3. 刷新商店（根据商店等级）
-    this.state.shopCards = generateShopCards(SHOP_CARD_COUNT, this.state.shopLevel);
-    this.state.selectedCard = null;
+    // 3. 刷新商店（保留锁定的卡牌）
+    this.refreshShop();
 
-    // 4. 进入购物阶段
+    // 4. 检查尤里卡时刻
+    this.checkEurekas();
+
+    // 5. 进入购物阶段
     this.state.phase = 'shopping';
+    this.state.selectedCard = null;
 
     this.emit('turn_started');
     this.emit('state_changed');
   }
 
-  /** 结算产出 */
+  /** 刷新商店（保留锁定的卡牌） */
+  private refreshShop(): void {
+    const locks = this.state.shopCardLocks;
+    const oldCards = this.state.shopCards;
+    const count = this.config.shopCardCount;
+
+    // 计算需要刷新的槽位数
+    const lockedCards: (IShopCard | null)[] = [];
+    let refreshCount = 0;
+    for (let i = 0; i < count; i++) {
+      if (locks[i] && oldCards[i]) {
+        lockedCards.push(oldCards[i]);
+      } else {
+        lockedCards.push(null);
+        refreshCount++;
+      }
+    }
+
+    // 生成新卡填入空槽位
+    const newCards = generateShopCards(refreshCount, this.state.shopLevel);
+    let newIdx = 0;
+    const result: IShopCard[] = [];
+    const newLocks: boolean[] = [];
+
+    for (let i = 0; i < count; i++) {
+      if (lockedCards[i]) {
+        result.push(lockedCards[i]!);
+        newLocks.push(true);
+      } else if (newIdx < newCards.length) {
+        result.push(newCards[newIdx++]);
+        newLocks.push(false);
+      }
+    }
+
+    this.state.shopCards = result;
+    this.state.shopCardLocks = newLocks;
+  }
+
+  /** 结算产出（含道具效果） */
   private collectYields(): void {
-    const yields = calculateTotalYields(this.state.board);
+    // 基础产出
+    const baseYields = calculateTotalYields(this.state.board);
+
+    // 应用道具效果
+    const yields = this.applyItemEffects(baseYields);
     this.state.perTurnYields = yields;
 
     // 投资型
@@ -164,20 +501,98 @@ export class GameEngine {
 
     // 食物
     const grossFood = yields.food;
-    const consumption = this.state.population * FOOD_PER_POP;
+    const consumption = this.state.population * this.config.foodPerPop;
     const netFood = grossFood - consumption;
     this.state.perTurnNetFood = netFood;
     this.state.foodProgress += netFood;
   }
 
+  /** 应用道具被动效果到产出 */
+  private applyItemEffects(baseYields: IYields): IYields {
+    let yields = { ...baseYields };
+
+    // Pass 1: flat_per_turn and per_tag bonuses
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        switch (effect.type) {
+          case 'flat_per_turn': {
+            if (effect.yields) {
+              const ey = effect.yields;
+              yields = addYields(yields, {
+                gold: ey.gold || 0,
+                food: ey.food || 0,
+                production: ey.production || 0,
+                science: ey.science || 0,
+                culture: ey.culture || 0,
+                faith: ey.faith || 0,
+              });
+            }
+            break;
+          }
+          case 'per_tag': {
+            if (effect.matchTag && effect.yields) {
+              let count = 0;
+              for (const [, tile] of this.state.board) {
+                if (tile.isWorked && tile.terrain && tileHasTag(tile, effect.matchTag)) {
+                  count++;
+                }
+              }
+              const ey = effect.yields;
+              yields = addYields(yields, scaleYields({
+                gold: ey.gold || 0,
+                food: ey.food || 0,
+                production: ey.production || 0,
+                science: ey.science || 0,
+                culture: ey.culture || 0,
+                faith: ey.faith || 0,
+              }, count));
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // Pass 2: yield_percent bonuses (线性加合：先累加百分比，再一次性应用)
+    const pctBonuses: Partial<Record<keyof IYields, number>> = {};
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'yield_percent' && effect.yieldKey && effect.percent) {
+          pctBonuses[effect.yieldKey] = (pctBonuses[effect.yieldKey] || 0) + effect.percent;
+        }
+      }
+    }
+    for (const [key, pct] of Object.entries(pctBonuses) as [keyof IYields, number][]) {
+      if (pct > 0) {
+        yields[key] = Math.floor(yields[key] * (1 + pct / 100));
+      }
+    }
+
+    return yields;
+  }
+
+  // -------- 非线性人口增长 --------
+
+  /** 获取指定人口数下的增长阈值（非线性：随人口递增） */
+  getGrowthThresholdForPop(pop: number): number {
+    return this.config.baseGrowthFood + Math.max(0, pop - 1) * this.config.growthFoodPerPop;
+  }
+
+  /** 获取当前人口的增长阈值 */
+  getGrowthThreshold(): number {
+    return this.getGrowthThresholdForPop(this.state.population);
+  }
+
   /** 人口增减 */
   private checkPopulationGrowth(): void {
-    while (this.state.foodProgress >= GROWTH_THRESHOLD) {
-      this.state.foodProgress -= GROWTH_THRESHOLD;
+    let threshold = this.getGrowthThresholdForPop(this.state.population);
+    while (this.state.foodProgress >= threshold) {
+      this.state.foodProgress -= threshold;
       this.state.population++;
       autoAssignBestWorker(this.state.board);
-      this.checkRing2Unlock();
+      this.checkOuterUnlock();
       this.emit('population_changed');
+      threshold = this.getGrowthThresholdForPop(this.state.population);
     }
 
     while (this.state.foodProgress < 0 && this.state.population > 1) {
@@ -192,17 +607,53 @@ export class GameEngine {
     }
   }
 
-  /** 根据人口解锁 Ring-2 格子 */
-  private checkRing2Unlock(): void {
+  /** 根据人口解锁外圈格子（优先低环数） */
+  private checkOuterUnlock(): void {
     const shouldUnlock = Math.max(0, this.state.population - 1);
-    while (
-      this.state.unlockedRing2Count < shouldUnlock &&
-      this.state.unlockedRing2Count < MAX_RING2_UNLOCKS
-    ) {
-      unlockNextRing2Hex(this.state.board);
-      this.state.unlockedRing2Count++;
+    while (this.state.unlockedOuterCount < shouldUnlock) {
+      const unlocked = unlockNextOuterHex(this.state.board);
+      if (!unlocked) break; // 没有更多可解锁
+      this.state.unlockedOuterCount++;
       this.emit('hex_unlocked');
     }
+  }
+
+  // -------- 金币解锁格子 --------
+
+  /** 获取解锁指定格子所需的金币 */
+  getHexUnlockCost(coord: HexCoord): number {
+    const tile = getTile(this.state.board, coord);
+    if (!tile) return Infinity;
+    switch (tile.ring) {
+      case 2: return this.config.hexUnlockCostRing2;
+      case 3: return this.config.hexUnlockCostRing3;
+      case 4: return this.config.hexUnlockCostRing4;
+      default: return Infinity;
+    }
+  }
+
+  /** 金币解锁指定格子 */
+  unlockHexByGold(coord: HexCoord): boolean {
+    const tile = getTile(this.state.board, coord);
+    if (!tile || tile.unlocked || tile.ring <= 1) return false;
+
+    const cost = this.getHexUnlockCost(coord);
+    if (this.state.storedGold < cost) return false;
+
+    // 检查是否有已解锁的邻居
+    const neighbors: HexCoord[] = hexNeighbors(coord);
+    const hasUnlockedNeighbor = neighbors.some((n: HexCoord) => {
+      const nt = getTile(this.state.board, n);
+      return nt && nt.unlocked;
+    });
+    if (!hasUnlockedNeighbor) return false;
+
+    this.state.storedGold -= cost;
+    tile.unlocked = true;
+
+    this.emit('hex_unlocked');
+    this.emit('state_changed');
+    return true;
   }
 
   // -------- 工人管理 --------
@@ -238,16 +689,57 @@ export class GameEngine {
     return true;
   }
 
-  /** 刷新每回合产出快照 */
+  /** 撤回所有工人（城市中心除外） */
+  private clearAllWorkers(): void {
+    for (const [, tile] of this.state.board) {
+      if (tile.isWorked && tile.terrain && tile.terrain.id !== 'city_center') {
+        tile.isWorked = false;
+      }
+    }
+  }
+
+  /** 一键重新分配：全局最优（总产出价值最大化） */
+  reassignAllWorkers(): void {
+    this.clearAllWorkers();
+    for (let i = 0; i < this.state.population; i++) {
+      autoAssignBestWorker(this.state.board);
+    }
+    this.refreshYieldSnapshot();
+    this.emit('state_changed');
+  }
+
+  /** 一键重新分配：粮食优先（食物产出最大化） */
+  reassignWorkersFoodPriority(): void {
+    this.clearAllWorkers();
+    for (let i = 0; i < this.state.population; i++) {
+      autoAssignBestFoodWorker(this.state.board);
+    }
+    this.refreshYieldSnapshot();
+    this.emit('state_changed');
+  }
+
+  /** 刷新每回合产出快照（含道具效果） */
   private refreshYieldSnapshot(): void {
-    const yields = calculateTotalYields(this.state.board);
+    const baseYields = calculateTotalYields(this.state.board);
+    const yields = this.applyItemEffects(baseYields);
     this.state.perTurnYields = yields;
     const grossFood = yields.food;
-    const consumption = this.state.population * FOOD_PER_POP;
+    const consumption = this.state.population * this.config.foodPerPop;
     this.state.perTurnNetFood = grossFood - consumption;
   }
 
   // -------- 商店操作（购买地块卡牌） --------
+
+  /** 切换商店卡牌锁定状态 */
+  toggleShopLock(index: number): void {
+    while (this.state.shopCardLocks.length < this.state.shopCards.length) {
+      this.state.shopCardLocks.push(false);
+    }
+    if (index >= 0 && index < this.state.shopCardLocks.length) {
+      this.state.shopCardLocks[index] = !this.state.shopCardLocks[index];
+      this.emit('state_changed');
+    }
+  }
 
   /** 选择一张商店卡牌 */
   selectCard(card: IShopCard): boolean {
@@ -285,6 +777,7 @@ export class GameEngine {
     tile.terrain = card.terrain;
     tile.feature = card.feature || null;
     tile.resource = card.resource || null;
+    tile.goldInvested = card.cost;
 
     // 自动分配工人
     if (this.getAvailableWorkers() > 0 && tile.terrain) {
@@ -292,9 +785,14 @@ export class GameEngine {
     }
 
     this.state.storedGold -= card.cost;
-    this.state.shopCards = this.state.shopCards.filter(
-      c => c.instanceId !== card.instanceId
-    );
+
+    // 从商店移除并清除对应锁
+    const idx = this.state.shopCards.findIndex(c => c.instanceId === card.instanceId);
+    if (idx >= 0) {
+      this.state.shopCards.splice(idx, 1);
+      this.state.shopCardLocks.splice(idx, 1);
+    }
+
     this.state.selectedCard = null;
     this.state.phase = 'shopping';
 
@@ -307,10 +805,43 @@ export class GameEngine {
   /** 刷新商店 */
   rerollShop(): boolean {
     if (this.state.phase !== 'shopping') return false;
-    if (this.state.storedGold < REROLL_COST) return false;
+    if (this.state.storedGold < this.config.rerollCost) return false;
 
-    this.state.storedGold -= REROLL_COST;
-    this.state.shopCards = generateShopCards(SHOP_CARD_COUNT, this.state.shopLevel);
+    this.state.storedGold -= this.config.rerollCost;
+
+    // 锁定的卡保留
+    const locks = this.state.shopCardLocks;
+    const oldCards = this.state.shopCards;
+    const count = this.config.shopCardCount;
+    let refreshCount = 0;
+    const lockedCards: (IShopCard | null)[] = [];
+
+    for (let i = 0; i < count; i++) {
+      if (locks[i] && oldCards[i]) {
+        lockedCards.push(oldCards[i]);
+      } else {
+        lockedCards.push(null);
+        refreshCount++;
+      }
+    }
+
+    const newCards = generateShopCards(refreshCount, this.state.shopLevel);
+    let newIdx = 0;
+    const result: IShopCard[] = [];
+    const newLocks: boolean[] = [];
+
+    for (let i = 0; i < count; i++) {
+      if (lockedCards[i]) {
+        result.push(lockedCards[i]!);
+        newLocks.push(true);
+      } else if (newIdx < newCards.length) {
+        result.push(newCards[newIdx++]);
+        newLocks.push(false);
+      }
+    }
+
+    this.state.shopCards = result;
+    this.state.shopCardLocks = newLocks;
     this.state.selectedCard = null;
 
     this.emit('state_changed');
@@ -339,6 +870,7 @@ export class GameEngine {
     this.state.storedProduction -= improvement.productionCost;
     tile.improvement = improvement;
     tile.improvementLevel = 1;
+    tile.productionInvested += improvement.productionCost;
 
     this.refreshYieldSnapshot();
     this.emit('tile_placed', coord);
@@ -366,6 +898,7 @@ export class GameEngine {
     tile.district = district;
     tile.improvement = null;
     tile.improvementLevel = 0;
+    tile.productionInvested += district.productionCost;
 
     this.refreshYieldSnapshot();
     this.emit('tile_placed', coord);
@@ -378,15 +911,47 @@ export class GameEngine {
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.improvement) return false;
     if (tile.improvementLevel >= tile.improvement.maxLevel) return false;
-    if (this.state.storedProduction < PRODUCTION_PER_UPGRADE) return false;
+    if (this.state.storedProduction < this.config.productionPerUpgrade) return false;
 
-    this.state.storedProduction -= PRODUCTION_PER_UPGRADE;
+    this.state.storedProduction -= this.config.productionPerUpgrade;
     tile.improvementLevel++;
+    tile.productionInvested += this.config.productionPerUpgrade;
 
     this.refreshYieldSnapshot();
     this.emit('tile_upgraded', coord);
     this.emit('state_changed');
     return true;
+  }
+
+  // -------- 出售地块 --------
+
+  /** 出售地块，返还部分金币和生产力 */
+  sellTile(coord: HexCoord): { goldRefund: number; productionRefund: number } | null {
+    const tile = getTile(this.state.board, coord);
+    if (!tile || !tile.terrain || tile.terrain.id === 'city_center') return null;
+
+    const ratio = this.config.sellRefundRatio;
+    const goldRefund = Math.floor(tile.goldInvested * ratio);
+    const productionRefund = Math.floor(tile.productionInvested * ratio);
+
+    // 重置地块
+    tile.terrain = null;
+    tile.feature = null;
+    tile.resource = null;
+    tile.improvement = null;
+    tile.improvementLevel = 0;
+    tile.district = null;
+    tile.isWorked = false;
+    tile.goldInvested = 0;
+    tile.productionInvested = 0;
+
+    // 返还资源
+    this.state.storedGold += goldRefund;
+    this.state.storedProduction += productionRefund;
+
+    this.refreshYieldSnapshot();
+    this.emit('state_changed');
+    return { goldRefund, productionRefund };
   }
 
   // -------- 商店升级（消耗科技） --------
@@ -412,6 +977,183 @@ export class GameEngine {
     const nextLevel = this.state.shopLevel + 1;
     const config = SHOP_LEVEL_CONFIGS.find(c => c.level === nextLevel);
     return config ? config.upgradeCost : null;
+  }
+
+  // -------- 道具系统 --------
+
+  /** 获取进入道具商店的费用 */
+  getItemShopCost(pool: ItemPool): number {
+    switch (pool) {
+      case 'gold': return this.config.itemShopGoldCost;
+      case 'culture': return this.config.itemShopCultureCost;
+      case 'faith': return this.config.itemShopFaithCost;
+    }
+  }
+
+  /** 获取用于支付门票的资源名 */
+  getItemShopCurrency(pool: ItemPool): string {
+    switch (pool) {
+      case 'gold': return '🪙';
+      case 'culture': return '🎭';
+      case 'faith': return '🙏';
+    }
+  }
+
+  /** 能否进入指定道具商店 (付费或免费) */
+  canEnterItemShop(pool: ItemPool): boolean {
+    // 有免费券
+    if (this.state.freeItemShopEntries.includes(pool)) return true;
+    // 有足够资源
+    return this.getAvailableCurrency(pool) >= this.getItemShopCost(pool);
+  }
+
+  /** 获取指定类型的可用资源 */
+  private getAvailableCurrency(pool: ItemPool): number {
+    switch (pool) {
+      case 'gold': return this.state.storedGold;
+      case 'culture': return this.state.accumulatedCulture;
+      case 'faith': return this.state.accumulatedFaith;
+    }
+  }
+
+  /** 支付门票并生成道具选项 */
+  enterItemShop(pool: ItemPool): IItemDef[] | null {
+    // 检查免费券
+    const freeIdx = this.state.freeItemShopEntries.indexOf(pool);
+    if (freeIdx >= 0) {
+      this.state.freeItemShopEntries.splice(freeIdx, 1);
+    } else {
+      const cost = this.getItemShopCost(pool);
+      switch (pool) {
+        case 'gold':
+          if (this.state.storedGold < cost) return null;
+          this.state.storedGold -= cost;
+          break;
+        case 'culture':
+          if (this.state.accumulatedCulture < cost) return null;
+          this.state.accumulatedCulture -= cost;
+          break;
+        case 'faith':
+          if (this.state.accumulatedFaith < cost) return null;
+          this.state.accumulatedFaith -= cost;
+          break;
+      }
+    }
+
+    // 从池中随机抽取
+    const poolItems = ITEM_POOL[pool] || [];
+    const offerings = this.randomPickItems(poolItems, this.config.itemShopOfferingCount);
+
+    this.emit('state_changed');
+    return offerings;
+  }
+
+  /** 从池中随机不重复抽取N个道具 */
+  private randomPickItems(pool: IItemDef[], count: number): IItemDef[] {
+    // 加权抽取（rarity越高权重越低）
+    const weighted = pool.map(item => ({
+      item,
+      weight: item.rarity === 1 ? 10 : item.rarity === 2 ? 5 : 2,
+    }));
+
+    const result: IItemDef[] = [];
+    const available = [...weighted];
+
+    for (let i = 0; i < count && available.length > 0; i++) {
+      const totalWeight = available.reduce((s, w) => s + w.weight, 0);
+      let roll = Math.random() * totalWeight;
+      let picked = available[0];
+      for (const w of available) {
+        roll -= w.weight;
+        if (roll <= 0) {
+          picked = w;
+          break;
+        }
+      }
+      result.push(picked.item);
+      const idx = available.indexOf(picked);
+      if (idx >= 0) available.splice(idx, 1);
+    }
+
+    return result;
+  }
+
+  /** 玩家选择一个道具并获得 */
+  claimItem(item: IItemDef): void {
+    this.state.items.push(item);
+
+    // 处理即时效果
+    for (const effect of item.effects) {
+      switch (effect.type) {
+        case 'instant': {
+          if (effect.yields) {
+            if (effect.yields.gold) this.state.storedGold += effect.yields.gold;
+            if (effect.yields.production) this.state.storedProduction += effect.yields.production;
+            if (effect.yields.science) this.state.storedScience += effect.yields.science;
+            if (effect.yields.culture) this.state.accumulatedCulture += effect.yields.culture;
+            if (effect.yields.faith) this.state.accumulatedFaith += effect.yields.faith;
+            if (effect.yields.food) this.state.foodProgress += effect.yields.food;
+          }
+          break;
+        }
+        case 'pop_growth': {
+          this.state.population++;
+          autoAssignBestWorker(this.state.board);
+          this.checkOuterUnlock();
+          break;
+        }
+      }
+    }
+
+    this.refreshYieldSnapshot();
+    this.emit('item_acquired', item);
+    this.emit('state_changed');
+  }
+
+  // -------- 尤里卡时刻 --------
+
+  /** 检查尤里卡条件 */
+  private checkEurekas(): void {
+    for (const eureka of EUREKA_DEFS) {
+      if (this.state.eurekaTriggered.includes(eureka.id)) continue;
+      if (this.state.turn !== eureka.checkTurn) continue;
+
+      if (this.checkEurekaCondition(eureka.id)) {
+        this.state.eurekaTriggered.push(eureka.id);
+        this.state.freeItemShopEntries.push(eureka.pool);
+        this.emit('eureka_triggered', eureka);
+      }
+    }
+  }
+
+  /** 检查具体的尤里卡条件 */
+  private checkEurekaCondition(id: string): boolean {
+    const s = this.state;
+    switch (id) {
+      case 'eureka_pop3_t5':
+        return s.population >= 3;
+      case 'eureka_prod15_t5':
+        return s.storedProduction >= 15;
+      case 'eureka_district_t8': {
+        for (const [, tile] of s.board) {
+          if (tile.district) return true;
+        }
+        return false;
+      }
+      case 'eureka_pop5_t12':
+        return s.population >= 5;
+      case 'eureka_culture20_t10':
+        return s.accumulatedCulture >= 20;
+      case 'eureka_tiles8_t15': {
+        let workedCount = 0;
+        for (const [, tile] of s.board) {
+          if (tile.isWorked) workedCount++;
+        }
+        return workedCount >= 8;
+      }
+      default:
+        return false;
+    }
   }
 
   /** 结束回合 */
@@ -469,8 +1211,7 @@ export class GameEngine {
 
   // -------- 常量访问 --------
 
-  getRerollCost(): number { return REROLL_COST; }
-  getGrowthThreshold(): number { return GROWTH_THRESHOLD; }
-  getFoodPerPop(): number { return FOOD_PER_POP; }
-  getProductionPerUpgrade(): number { return PRODUCTION_PER_UPGRADE; }
+  getRerollCost(): number { return this.config.rerollCost; }
+  getFoodPerPop(): number { return this.config.foodPerPop; }
+  getProductionPerUpgrade(): number { return this.config.productionPerUpgrade; }
 }

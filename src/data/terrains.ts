@@ -11,7 +11,7 @@ export const CITY_CENTER: ITerrain = {
   id: 'city_center',
   name: '城市中心',
   baseYields: { gold: 2, food: 2, production: 1, science: 0, culture: 0, faith: 0 },
-  color: '#8B7355',
+  color: '#B89868',
   buildable: false,
   tags: ['city_center'],
   icon: '🏛️',
@@ -21,9 +21,9 @@ export const GRASSLAND: ITerrain = {
   id: 'grassland',
   name: '草地',
   baseYields: { gold: 0, food: 2, production: 0, science: 0, culture: 0, faith: 0 },
-  color: '#5B8C32',
+  color: '#6BA842',
   buildable: true,
-  tags: ['grassland', 'flat', 'buildable'],
+  tags: ['grassland', 'flat', 'buildable', 'fertile'],
   icon: '🌿',
 };
 
@@ -31,9 +31,9 @@ export const PLAINS: ITerrain = {
   id: 'plains',
   name: '平原',
   baseYields: { gold: 0, food: 1, production: 1, science: 0, culture: 0, faith: 0 },
-  color: '#C8B432',
+  color: '#D8C44A',
   buildable: true,
-  tags: ['plains', 'flat', 'buildable'],
+  tags: ['plains', 'flat', 'buildable', 'fertile'],
   icon: '🌾',
 };
 
@@ -41,9 +41,9 @@ export const DESERT: ITerrain = {
   id: 'desert',
   name: '沙漠',
   baseYields: { gold: 0, food: 0, production: 0, science: 0, culture: 0, faith: 0 },
-  color: '#E8D5A0',
+  color: '#F0E0B0',
   buildable: true,
-  tags: ['desert', 'flat', 'buildable'],
+  tags: ['desert', 'flat', 'buildable', 'arid'],
   icon: '🏜️',
 };
 
@@ -51,9 +51,9 @@ export const TUNDRA: ITerrain = {
   id: 'tundra',
   name: '冻土',
   baseYields: { gold: 0, food: 1, production: 0, science: 0, culture: 0, faith: 0 },
-  color: '#A8B8C0',
+  color: '#B8CCD8',
   buildable: true,
-  tags: ['tundra', 'flat', 'buildable'],
+  tags: ['tundra', 'flat', 'buildable', 'cold'],
   icon: '❄️',
 };
 
@@ -61,7 +61,7 @@ export const MOUNTAIN: ITerrain = {
   id: 'mountain',
   name: '山脉',
   baseYields: { gold: 0, food: 0, production: 0, science: 0, culture: 0, faith: 0 },
-  color: '#808080',
+  color: '#9A9A9A',
   buildable: false,
   tags: ['mountain', 'natural'],
   icon: '⛰️',
@@ -71,7 +71,7 @@ export const LAKE: ITerrain = {
   id: 'lake',
   name: '湖泊',
   baseYields: { gold: 1, food: 1, production: 0, science: 0, culture: 0, faith: 0 },
-  color: '#4A90D9',
+  color: '#5AA0E8',
   buildable: false,
   tags: ['water', 'lake', 'natural'],
   icon: '🌊',
@@ -97,7 +97,7 @@ export const HILLS: IFeature = {
   removable: false,
   tags: ['hill'],
   icon: '⛰',
-  colorOverlay: '#A0855B',
+  colorOverlay: '#B8996A',
 };
 
 export const FOREST: IFeature = {
@@ -107,7 +107,7 @@ export const FOREST: IFeature = {
   removable: true,
   tags: ['forest', 'vegetation'],
   icon: '🌲',
-  colorOverlay: '#2E7D32',
+  colorOverlay: '#3A9040',
 };
 
 export const RAINFOREST: IFeature = {
@@ -117,7 +117,7 @@ export const RAINFOREST: IFeature = {
   removable: true,
   tags: ['rainforest', 'vegetation'],
   icon: '🌴',
-  colorOverlay: '#1B5E20',
+  colorOverlay: '#2A7030',
 };
 
 export const OASIS: IFeature = {
@@ -127,7 +127,7 @@ export const OASIS: IFeature = {
   removable: false,
   tags: ['oasis', 'natural'],
   icon: '🏝️',
-  colorOverlay: '#2ECC71',
+  colorOverlay: '#40DD85',
 };
 
 export const MARSH: IFeature = {
@@ -137,7 +137,7 @@ export const MARSH: IFeature = {
   removable: true,
   tags: ['marsh'],
   icon: '🌿',
-  colorOverlay: '#4A6741',
+  colorOverlay: '#5A7A52',
 };
 
 export const FEATURE_REGISTRY: Record<string, IFeature> = {

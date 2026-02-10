@@ -1,13 +1,18 @@
 /**
  * 六角棋盘 Canvas 渲染器
- * 负责绘制棋盘、处理鼠标事件
+ * 负责绘制棋盘、处理鼠标/触摸事件
+ * 支持响应式 hex 尺寸，4环棋盘
  */
 
-import { hexCorners, hexKey, hexToPixel, pixelToHex } from '../core/hex';
+import { hexCorners, hexKey, hexNeighbors, hexToPixel, pixelToHex } from '../core/hex';
 import type { HexCoord, ITile, IYields } from '../core/types';
+import { getTile } from '../game/board';
 import type { GameEngine } from '../game/engine';
 
-const HEX_SIZE = 48;
+/** 桌面端最大 hex 尺寸 */
+const MAX_HEX_SIZE = 40;
+/** 最小可用 hex 尺寸 */
+const MIN_HEX_SIZE = 20;
 
 export class HexRenderer {
   private canvas: HTMLCanvasElement;
@@ -16,6 +21,8 @@ export class HexRenderer {
 
   private offsetX = 0;
   private offsetY = 0;
+  /** 当前计算的 hex 尺寸（响应式） */
+  private hexSize = MAX_HEX_SIZE;
 
   private hoveredHex: HexCoord | null = null;
   private selectedHex: HexCoord | null = null;
@@ -45,6 +52,12 @@ export class HexRenderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.offsetX = rect.width / 2;
     this.offsetY = rect.height / 2;
+
+    // 4环 hex 网格: 宽约 16*hexSize, 高约 14*hexSize
+    // 取两个维度各自能容纳的 hexSize，用较小值
+    const hsByWidth = rect.width / 16;
+    const hsByHeight = rect.height / 14;
+    this.hexSize = Math.min(MAX_HEX_SIZE, Math.max(MIN_HEX_SIZE, Math.floor(Math.min(hsByWidth, hsByHeight))));
   }
 
   private bindEvents(): void {
@@ -55,21 +68,39 @@ export class HexRenderer {
       this.onHexHover?.(null);
       this.draw();
     });
+
+    this.canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      const coord = this.getCoordFromClientXY(touch.clientX, touch.clientY);
+      const tile = this.engine.getTileAt(coord);
+      if (tile) {
+        this.hoveredHex = coord;
+        this.onHexHover?.(coord);
+        this.onHexClick?.(coord);
+        this.draw();
+      }
+    }, { passive: false });
+
+    this.canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+    }, { passive: false });
+
     window.addEventListener('resize', () => {
       this.setupCanvas();
       this.draw();
     });
   }
 
-  private getMouseHex(e: MouseEvent): HexCoord {
+  private getCoordFromClientXY(clientX: number, clientY: number): HexCoord {
     const rect = this.canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left - this.offsetX;
-    const my = e.clientY - rect.top - this.offsetY;
-    return pixelToHex(mx, my, HEX_SIZE);
+    const mx = clientX - rect.left - this.offsetX;
+    const my = clientY - rect.top - this.offsetY;
+    return pixelToHex(mx, my, this.hexSize);
   }
 
   private handleMouseMove(e: MouseEvent): void {
-    const coord = this.getMouseHex(e);
+    const coord = this.getCoordFromClientXY(e.clientX, e.clientY);
     const key = hexKey(coord);
     if (!this.hoveredHex || hexKey(this.hoveredHex) !== key) {
       const tile = this.engine.getTileAt(coord);
@@ -85,7 +116,7 @@ export class HexRenderer {
   }
 
   private handleClick(e: MouseEvent): void {
-    const coord = this.getMouseHex(e);
+    const coord = this.getCoordFromClientXY(e.clientX, e.clientY);
     const tile = this.engine.getTileAt(coord);
     if (tile) {
       this.onHexClick?.(coord);
@@ -113,25 +144,29 @@ export class HexRenderer {
     const h = this.canvas.height / (window.devicePixelRatio || 1);
     ctx.clearRect(0, 0, w, h);
 
+    // 绘制棋盘区域底色渐变，与外部背景区分
+    const grad = ctx.createRadialGradient(this.offsetX, this.offsetY, 0, this.offsetX, this.offsetY, this.hexSize * 10);
+    grad.addColorStop(0, '#1a2a3a');
+    grad.addColorStop(0.7, '#121e2b');
+    grad.addColorStop(1, '#0f1923');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
     const state = this.engine.getState();
 
-    // 绘制所有地块
     for (const [, tile] of state.board) {
       this.drawTile(tile);
     }
 
-    // 有效放置高亮
     for (const key of this.validPlacements) {
       const [q, r] = key.split(',').map(Number);
       this.drawValidPlacementHighlight({ q, r });
     }
 
-    // 选中高亮（金色边框）
     if (this.selectedHex) {
       this.drawSelectedHighlight(this.selectedHex);
     }
 
-    // 悬停高亮
     if (this.hoveredHex) {
       this.drawHoverHighlight(this.hoveredHex);
     }
@@ -139,12 +174,12 @@ export class HexRenderer {
 
   private drawTile(tile: ITile): void {
     const { ctx } = this;
-    const { x, y } = hexToPixel(tile.coord, HEX_SIZE);
+    const hs = this.hexSize;
+    const { x, y } = hexToPixel(tile.coord, hs);
     const cx = x + this.offsetX;
     const cy = y + this.offsetY;
-    const corners = hexCorners(cx, cy, HEX_SIZE - 1);
+    const corners = hexCorners(cx, cy, hs - 1);
 
-    // 画六角形路径
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
     for (let i = 1; i < 6; i++) {
@@ -154,30 +189,49 @@ export class HexRenderer {
 
     // ---- 未解锁 ----
     if (!tile.unlocked) {
-      ctx.fillStyle = '#0a0f15';
+      // 检查是否可以金币解锁（有已解锁邻居）
+      const state = this.engine.getState();
+      const neighbors = hexNeighbors(tile.coord);
+      const hasUnlockedNeighbor = neighbors.some(n => {
+        const nt = getTile(state.board, n);
+        return nt && nt.unlocked;
+      });
+
+      ctx.fillStyle = hasUnlockedNeighbor ? '#1e3348' : '#15222e';
       ctx.fill();
-      ctx.strokeStyle = '#1a2535';
+      ctx.strokeStyle = hasUnlockedNeighbor ? '#3a6580' : '#2a3d52';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.fillStyle = '#2a3545';
-      ctx.font = '16px sans-serif';
+
+      ctx.fillStyle = hasUnlockedNeighbor ? '#6aafcf' : '#405060';
+      ctx.font = `${Math.round(hs * 0.33)}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('🔒', cx, cy);
+      ctx.fillText('🔒', cx, cy - hs * 0.1);
+
+      // 显示解锁费用
+      if (hasUnlockedNeighbor) {
+        const cost = this.engine.getHexUnlockCost(tile.coord);
+        if (cost < Infinity) {
+          ctx.font = `${Math.max(8, Math.round(hs * 0.22))}px sans-serif`;
+          ctx.fillStyle = '#8ac0e0';
+          ctx.fillText(`${cost}🪙`, cx, cy + hs * 0.25);
+        }
+      }
       return;
     }
 
     // ---- 空地 ----
     if (!tile.terrain) {
-      ctx.fillStyle = '#151f2e';
+      ctx.fillStyle = '#1e3045';
       ctx.fill();
-      ctx.strokeStyle = '#2a4060';
+      ctx.strokeStyle = '#3a6890';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 4]);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = '#3a5a7a';
-      ctx.font = '20px sans-serif';
+      ctx.fillStyle = '#5a8ab0';
+      ctx.font = `${Math.round(hs * 0.42)}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('+', cx, cy);
@@ -193,14 +247,18 @@ export class HexRenderer {
     ctx.fillStyle = fillColor;
     ctx.fill();
 
-    // 未工作的地块：半透明遮罩使其变暗
     if (!tile.isWorked) {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
       ctx.fill();
     }
 
-    ctx.strokeStyle = this.darkenColor(fillColor, 0.3);
-    ctx.lineWidth = tile.isWorked ? 1.5 : 1;
+    if (tile.isWorked) {
+      ctx.strokeStyle = this.lightenColor(fillColor, 0.3);
+      ctx.lineWidth = 1.5;
+    } else {
+      ctx.strokeStyle = this.darkenColor(fillColor, 0.15);
+      ctx.lineWidth = 1;
+    }
     ctx.stroke();
 
     // 图标
@@ -210,61 +268,68 @@ export class HexRenderer {
     if (tile.improvement) icon = tile.improvement.icon;
     if (tile.district) icon = tile.district.icon;
 
-    ctx.font = '20px sans-serif';
+    ctx.font = `${Math.round(hs * 0.42)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(icon, cx, cy - 6);
+    ctx.fillText(icon, cx, cy - hs * 0.125);
 
     // 工作状态标记
     if (tile.terrain.id !== 'city_center') {
+      const statusFontSize = Math.round(hs * 0.23);
       if (tile.isWorked) {
-        // 工作中：左上角小人图标
-        ctx.font = '11px sans-serif';
+        ctx.font = `${statusFontSize}px sans-serif`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.fillText('👷', cx - HEX_SIZE * 0.52, cy - HEX_SIZE * 0.58);
+        ctx.fillText('👷', cx - hs * 0.52, cy - hs * 0.58);
       } else {
-        // 空闲：显示 "zzz"
-        ctx.font = '10px sans-serif';
+        ctx.font = `${statusFontSize}px sans-serif`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         ctx.fillStyle = '#607080';
-        ctx.fillText('💤', cx - HEX_SIZE * 0.52, cy - HEX_SIZE * 0.58);
+        ctx.fillText('💤', cx - hs * 0.52, cy - hs * 0.58);
       }
     }
 
-    // 产出概要（只对工作中的地块显示）
+    // 产出概要（只对工作中的地块显示，含道具加成）
     if (tile.isWorked) {
-      const yields = this.engine.getTileYields(tile.coord);
+      const yields = this.engine.getTileEffectiveYields(tile.coord);
       const yieldText = this.formatYieldCompact(yields);
       if (yieldText) {
-        ctx.font = '11px sans-serif';
+        const yieldFontSize = Math.max(8, Math.round(hs * 0.22));
+        ctx.font = `${yieldFontSize}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const metrics = ctx.measureText(yieldText);
-        const tw = metrics.width + 8;
+        const tw = metrics.width + 6;
         ctx.fillStyle = 'rgba(0,0,0,0.65)';
-        ctx.fillRect(cx - tw / 2, cy + 9, tw, 16);
+        ctx.fillRect(cx - tw / 2, cy + hs * 0.19, tw, yieldFontSize + 4);
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(yieldText, cx, cy + 17);
+        ctx.fillText(yieldText, cx, cy + hs * 0.19 + (yieldFontSize + 4) / 2);
       }
     }
 
     // 升级标记
     if (tile.improvement && tile.improvementLevel > 1) {
-      ctx.font = 'bold 10px sans-serif';
+      ctx.font = `bold ${Math.round(hs * 0.2)}px sans-serif`;
       ctx.fillStyle = '#f0c040';
       ctx.textAlign = 'right';
-      ctx.fillText(`Lv${tile.improvementLevel}`, cx + HEX_SIZE * 0.6, cy - HEX_SIZE * 0.4);
+      ctx.fillText(`Lv${tile.improvementLevel}`, cx + hs * 0.6, cy - hs * 0.4);
     }
+
+    // 环数标记（仅调试用，可注释掉）
+    // ctx.font = `${Math.round(hs * 0.18)}px sans-serif`;
+    // ctx.fillStyle = '#ffffff40';
+    // ctx.textAlign = 'right';
+    // ctx.fillText(`R${tile.ring}`, cx + hs * 0.55, cy + hs * 0.5);
   }
 
   private drawValidPlacementHighlight(coord: HexCoord): void {
     const { ctx } = this;
-    const { x, y } = hexToPixel(coord, HEX_SIZE);
+    const hs = this.hexSize;
+    const { x, y } = hexToPixel(coord, hs);
     const cx = x + this.offsetX;
     const cy = y + this.offsetY;
-    const corners = hexCorners(cx, cy, HEX_SIZE - 1);
+    const corners = hexCorners(cx, cy, hs - 1);
 
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
@@ -280,10 +345,11 @@ export class HexRenderer {
 
   private drawSelectedHighlight(coord: HexCoord): void {
     const { ctx } = this;
-    const { x, y } = hexToPixel(coord, HEX_SIZE);
+    const hs = this.hexSize;
+    const { x, y } = hexToPixel(coord, hs);
     const cx = x + this.offsetX;
     const cy = y + this.offsetY;
-    const corners = hexCorners(cx, cy, HEX_SIZE);
+    const corners = hexCorners(cx, cy, hs);
 
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
@@ -297,10 +363,11 @@ export class HexRenderer {
 
   private drawHoverHighlight(coord: HexCoord): void {
     const { ctx } = this;
-    const { x, y } = hexToPixel(coord, HEX_SIZE);
+    const hs = this.hexSize;
+    const { x, y } = hexToPixel(coord, hs);
     const cx = x + this.offsetX;
     const cy = y + this.offsetY;
-    const corners = hexCorners(cx, cy, HEX_SIZE);
+    const corners = hexCorners(cx, cy, hs);
 
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
@@ -319,7 +386,7 @@ export class HexRenderer {
     if (y.production) parts.push(`${y.production}⚙️`);
     if (y.science) parts.push(`${y.science}🔬`);
     if (y.culture) parts.push(`${y.culture}🎭`);
-    if (y.faith) parts.push(`${y.faith}⛪`);
+    if (y.faith) parts.push(`${y.faith}🙏`);
     return parts.join(' ');
   }
 
@@ -336,6 +403,13 @@ export class HexRenderer {
     const r = Math.max(0, Math.round(parseInt(color.slice(1, 3), 16) * (1 - amount)));
     const g = Math.max(0, Math.round(parseInt(color.slice(3, 5), 16) * (1 - amount)));
     const b = Math.max(0, Math.round(parseInt(color.slice(5, 7), 16) * (1 - amount)));
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  }
+
+  private lightenColor(color: string, amount: number): string {
+    const r = Math.min(255, Math.round(parseInt(color.slice(1, 3), 16) + (255 - parseInt(color.slice(1, 3), 16)) * amount));
+    const g = Math.min(255, Math.round(parseInt(color.slice(3, 5), 16) + (255 - parseInt(color.slice(3, 5), 16)) * amount));
+    const b = Math.min(255, Math.round(parseInt(color.slice(5, 7), 16) + (255 - parseInt(color.slice(5, 7), 16)) * amount));
     return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
   }
 }

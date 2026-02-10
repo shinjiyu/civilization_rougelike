@@ -69,18 +69,18 @@ export const HOLY_SITE: IDistrict = {
       matchTag: 'mountain',
       bonus: { gold: 0, food: 0, production: 0, science: 0, culture: 0, faith: 1 },
       mode: 'per_each',
-      description: '每个相邻山脉 +1⛪',
+      description: '每个相邻山脉 +1🙏',
     },
     {
       matchTag: 'natural',
       bonus: { gold: 0, food: 0, production: 0, science: 0, culture: 0, faith: 1 },
       mode: 'per_each',
-      description: '每个相邻自然地貌 +1⛪',
+      description: '每个相邻自然地貌 +1🙏',
     },
   ],
   placementRequireTags: ['buildable'],
   tags: ['holy_site', 'district', 'faith_district'],
-  icon: '⛪',
+  icon: '🙏',
   productionCost: 15,
 };
 

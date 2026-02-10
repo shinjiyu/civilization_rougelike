@@ -38,6 +38,11 @@ body {
   flex-direction: column;
   height: 100vh;
   width: 100vw;
+  /* 安全区域适配（刘海屏/打孔屏）：直接在 app 容器上处理 */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /* ============ 顶部HUD ============ */
@@ -122,21 +127,29 @@ body {
   cursor: pointer;
 }
 
-/* ============ 右侧面板 ============ */
+/* ============ 左右面板 ============ */
 
-#side-panel {
-  width: 280px;
-  min-width: 240px;
+.side-panel {
+  width: 260px;
+  min-width: 220px;
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
-  border-left: 1px solid var(--border-color);
   flex-shrink: 0;
   overflow-y: auto;
 }
 
-@media (max-width: 800px) {
-  #side-panel {
+#left-panel {
+  border-right: 1px solid var(--border-color);
+  order: -1;
+}
+
+#right-panel {
+  border-left: 1px solid var(--border-color);
+}
+
+@media (max-width: 1100px) {
+  .side-panel {
     width: 220px;
     min-width: 200px;
   }
@@ -518,6 +531,242 @@ body {
   margin-top: 8px;
 }
 
+/* ============ 出售按钮 ============ */
+
+.build-action-btn.sell-btn {
+  flex-direction: row;
+  justify-content: space-between;
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.build-action-btn.sell-btn:hover:not(:disabled) {
+  border-color: var(--accent-red);
+  background: rgba(224, 64, 64, 0.1);
+}
+
+/* ============ 确认区域 ============ */
+
+.confirm-section {
+  background: rgba(224, 112, 32, 0.08);
+  border-radius: 8px;
+  padding: 8px !important;
+}
+
+.confirm-section .confirm-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.confirm-section .confirm-btns .build-action-btn {
+  flex: 1;
+  justify-content: center;
+  text-align: center;
+}
+
+/* ============ 规则说明面板 ============ */
+
+#rules-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+
+#rules-overlay.visible {
+  display: flex;
+}
+
+#rules-content {
+  background: var(--bg-secondary);
+  border: 2px solid var(--accent-blue);
+  border-radius: 16px;
+  padding: 28px 32px;
+  min-width: 360px;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+#rules-content h2 {
+  font-size: 22px;
+  color: var(--accent-gold);
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+#rules-body h3 {
+  font-size: 15px;
+  color: var(--accent-blue);
+  margin-top: 16px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+#rules-body p,
+#rules-body li {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+#rules-body ul {
+  padding-left: 18px;
+  margin: 4px 0;
+}
+
+#rules-body .rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+#rules-body .rules-table th,
+#rules-body .rules-table td {
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  text-align: left;
+}
+
+#rules-body .rules-table th {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+#rules-body .rules-table td {
+  color: var(--text-secondary);
+}
+
+.rules-footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rules-footer .dev-contact {
+  color: var(--accent-blue);
+  font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  #rules-content {
+    min-width: unset;
+    width: 92vw;
+    max-width: 420px;
+    padding: 20px 16px;
+    max-height: 80vh;
+  }
+
+  #rules-content h2 {
+    font-size: 18px;
+  }
+
+  #rules-body h3 {
+    font-size: 14px;
+  }
+
+  #rules-body p,
+  #rules-body li {
+    font-size: 12px;
+  }
+}
+
+/* ============ 设置面板 ============ */
+
+#settings-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+
+#settings-overlay.visible {
+  display: flex;
+}
+
+#settings-content {
+  background: var(--bg-secondary);
+  border: 2px solid var(--accent-blue);
+  border-radius: 16px;
+  padding: 28px 36px;
+  min-width: 380px;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+#settings-content h2 {
+  font-size: 22px;
+  color: var(--accent-blue);
+  margin-bottom: 8px;
+}
+
+.settings-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+#settings-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+#settings-grid label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+#settings-grid input[type="number"] {
+  width: 80px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: right;
+}
+
+#settings-grid input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.settings-actions .action-btn {
+  font-size: 13px;
+  padding: 6px 16px;
+}
+
 /* ============ 提示信息 ============ */
 
 #toast {
@@ -539,4 +788,617 @@ body {
 
 #toast.visible {
   opacity: 1;
+}
+
+/* ============ 面板折叠切换 ============ */
+
+.panel-toggle {
+  display: none; /* 桌面端隐藏 */
+}
+
+.panel-body {
+  display: contents; /* 桌面端不影响布局 */
+}
+
+/* ============ 移动端适配 ============ */
+
+/* Canvas 禁止触摸滚动 */
+#board-canvas {
+  touch-action: none;
+}
+
+@media (max-width: 768px) {
+  /*
+   * 核心思路：
+   * 1) body/#app 用 dvh（动态视口高度），正确处理手机浏览器地址栏
+   * 2) #main 保持 flex:1 填满 HUD 与 action-bar 之间的空间
+   * 3) board-container 与 side-panel 用 flex 比例分配，不写死 px/vw/vh
+   * 4) 只在 side-panel 内部滚动，页面本身不滚动
+   */
+
+  body {
+    height: 100vh;
+    height: 100dvh; /* 现代浏览器覆盖，解决地址栏动态高度 */
+    overflow: hidden;
+  }
+
+  #app {
+    height: 100vh;
+    height: 100dvh;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* HUD 紧凑化 */
+  #hud {
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    gap: 4px;
+    min-height: auto;
+  }
+
+  #hud-turn {
+    font-size: 13px;
+    min-width: auto;
+  }
+
+  #hud-yields {
+    gap: 6px;
+    order: 3;
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .yield-item {
+    font-size: 12px;
+    padding: 1px 5px;
+    gap: 2px;
+  }
+
+  .yield-item .yield-value {
+    min-width: 18px;
+  }
+
+  .yield-item .yield-per-turn {
+    font-size: 10px;
+  }
+
+  #hud-score {
+    font-size: 12px;
+    min-width: auto;
+  }
+
+  #hud-score .score-value {
+    font-size: 15px;
+  }
+
+  /* 主体纵向排列，用 flex 分配高度 */
+  #main {
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* 棋盘：占更多空间，让地图更大 */
+  #board-container {
+    width: 100%;
+    flex: 5 1 0;
+    min-height: 0;
+    order: 0;
+  }
+
+  /* 移动端：两个面板合为纵向滚动区，紧凑 */
+  .side-panel {
+    width: 100%;
+    min-width: unset;
+    border-left: none;
+    border-right: none;
+    border-top: 1px solid var(--border-color);
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 面板折叠切换 - 移动端可见 */
+  .panel-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    flex-shrink: 0;
+  }
+
+  .panel-toggle:active {
+    background: var(--bg-card-hover);
+  }
+
+  .toggle-arrow {
+    font-size: 12px;
+    transition: transform 0.2s ease;
+    color: var(--text-muted);
+  }
+
+  .side-panel.collapsed .toggle-arrow {
+    transform: rotate(-90deg);
+  }
+
+  .panel-body {
+    display: block;
+  }
+
+  .side-panel.collapsed .panel-body {
+    display: none;
+  }
+
+  /* 展开的面板占更多空间，收起的面板只显示标题 */
+  .side-panel.collapsed {
+    flex: 0 0 auto !important;
+    overflow: hidden;
+  }
+
+  #left-panel {
+    order: 1;
+    flex: 2 1 0;
+  }
+
+  #right-panel {
+    order: 2;
+    flex: 2 1 0;
+  }
+
+  /* 商店卡片横向滚动 */
+  #shop-cards {
+    flex-direction: row;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: 6px;
+    padding-bottom: 4px;
+  }
+
+  .shop-card {
+    min-width: 170px;
+    flex-shrink: 0;
+    padding: 8px;
+  }
+
+  .shop-card .card-name {
+    font-size: 13px;
+  }
+
+  .shop-card .card-desc {
+    font-size: 11px;
+  }
+
+  #shop-panel,
+  #info-panel {
+    padding: 8px;
+  }
+
+  #shop-panel h3,
+  #info-panel h3 {
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+
+  #tile-info {
+    font-size: 12px;
+  }
+
+  /* 操作栏紧凑化 */
+  #action-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .action-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  /* 弹窗适配 */
+  #settings-content {
+    min-width: unset;
+    width: 90vw;
+    max-width: 400px;
+    padding: 20px;
+  }
+
+  #settings-content h2 {
+    font-size: 18px;
+  }
+
+  #settings-grid label {
+    font-size: 12px;
+  }
+
+  #settings-grid input[type="number"] {
+    width: 68px;
+    font-size: 12px;
+  }
+
+  .settings-actions {
+    flex-wrap: wrap;
+  }
+
+  .settings-actions .action-btn {
+    font-size: 12px;
+    padding: 5px 12px;
+  }
+
+  #game-over-content {
+    min-width: unset;
+    width: 90vw;
+    max-width: 360px;
+    padding: 24px;
+  }
+
+  #game-over-content h2 {
+    font-size: 22px;
+  }
+
+  .score-row {
+    font-size: 15px;
+  }
+
+  .score-row.total {
+    font-size: 20px;
+  }
+
+  /* Toast 位置调整 */
+  #toast {
+    bottom: 60px;
+    font-size: 13px;
+    padding: 6px 16px;
+  }
+}
+
+/* ============ 商店卡牌锁定 ============ */
+
+.shop-card-wrapper {
+  position: relative;
+}
+
+.shop-lock-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 1px 5px;
+  z-index: 2;
+  line-height: 1.2;
+}
+
+.shop-lock-btn.locked {
+  color: var(--accent-gold);
+  border-color: var(--accent-gold);
+  background: rgba(240, 192, 64, 0.15);
+}
+
+/* ============ 道具商店入口面板 ============ */
+
+#item-shop-panel {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+#item-shop-panel h3 {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+#item-shop-entries {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.item-shop-entry-btn {
+  flex: 1;
+  min-width: 70px;
+  padding: 6px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.item-shop-entry-btn:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-blue);
+}
+
+.item-shop-entry-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.item-shop-entry-btn .entry-pool {
+  font-weight: bold;
+  display: block;
+}
+
+.item-shop-entry-btn .entry-cost {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.item-shop-entry-btn.has-free {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 6px rgba(96, 192, 64, 0.3);
+}
+
+.item-shop-entry-btn.has-free .entry-cost {
+  color: var(--accent-green);
+}
+
+/* 尤里卡徽章 */
+#eureka-badges {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.eureka-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  margin: 2px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.eureka-badge.triggered {
+  background: rgba(96, 192, 64, 0.15);
+  color: var(--accent-green);
+  border: 1px solid var(--accent-green);
+}
+
+.eureka-badge.pending {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+
+/* ============ 道具背包 ============ */
+
+#item-inventory-panel {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+#item-inventory-panel h3 {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+#item-inventory {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.inventory-item {
+  padding: 3px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: default;
+  position: relative;
+}
+
+.inventory-item:hover .inventory-tooltip {
+  display: block;
+}
+
+.inventory-tooltip {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 10;
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  margin-bottom: 4px;
+}
+
+/* ============ 道具商店叠加层 ============ */
+
+#item-shop-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+
+#item-shop-overlay.visible {
+  display: flex;
+}
+
+#item-shop-content {
+  background: var(--bg-secondary);
+  border: 2px solid var(--accent-purple);
+  border-radius: 16px;
+  padding: 28px 32px;
+  min-width: 340px;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+  text-align: center;
+}
+
+#item-shop-title {
+  font-size: 22px;
+  color: var(--accent-gold);
+  margin-bottom: 16px;
+}
+
+#item-shop-offerings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.item-offering-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 2px solid var(--border-color);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.item-offering-card:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 12px rgba(192, 96, 208, 0.2);
+}
+
+.item-offering-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.item-offering-icon {
+  font-size: 24px;
+}
+
+.item-offering-name {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.item-offering-rarity {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: 2px;
+}
+
+.item-offering-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* 解锁格子按钮 */
+.build-action-btn.unlock-btn {
+  flex-direction: row;
+  justify-content: center;
+  gap: 6px;
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+/* ============ 地形限制提示 ============ */
+.terrain-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* 超小屏幕 (< 400px) */
+@media (max-width: 400px) {
+  .yield-item {
+    font-size: 11px;
+    padding: 1px 3px;
+  }
+
+  #hud-yields {
+    gap: 4px;
+  }
+
+  .shop-card {
+    min-width: 150px;
+  }
+
+  .action-btn {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+
+  .item-shop-entry-btn {
+    min-width: 60px;
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+
+  #item-shop-content {
+    min-width: unset;
+    width: 92vw;
+    padding: 20px 16px;
+  }
+}
+
+/* Mobile item shop overlay */
+@media (max-width: 768px) {
+  #item-shop-content {
+    min-width: unset;
+    width: 92vw;
+    max-width: 420px;
+    padding: 20px 16px;
+  }
+
+  #item-shop-title {
+    font-size: 18px;
+  }
+
+  .item-offering-name {
+    font-size: 14px;
+  }
+
+  .item-offering-desc {
+    font-size: 12px;
+  }
+
+  #item-shop-panel {
+    padding: 8px;
+  }
+
+  #item-inventory-panel {
+    padding: 8px;
+  }
 }

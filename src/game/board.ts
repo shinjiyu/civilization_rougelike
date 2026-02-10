@@ -1,21 +1,30 @@
 /**
  * 棋盘管理
  * 负责棋盘初始化、地块操作、Tag查询、工人分配
+ * 4环棋盘（61格），支持人口解锁和金币解锁
  */
 
-import { hexKey, hexNeighbors, hexRing } from '../core/hex';
+import { hexDistance, hexKey, hexNeighbors, hexRing } from '../core/hex';
 import type { HexCoord, IAdjacencyRule, ITile, IYields } from '../core/types';
 import { addYields, emptyYields, scaleYields, totalYieldValue } from '../core/yields';
 import { CITY_CENTER } from '../data/terrains';
 
-/** 创建初始棋盘（2环，19格） */
+/** 最大环数 */
+export const MAX_RING = 4;
+
+/** 获取六角格所在的环数 (距离中心的距离) */
+export function getHexRing(coord: HexCoord): number {
+  return hexDistance(coord, { q: 0, r: 0 });
+}
+
+/** 创建初始棋盘（4环，61格） */
 export function createBoard(): Map<string, ITile> {
   const board = new Map<string, ITile>();
+  const center: HexCoord = { q: 0, r: 0 };
 
   // Ring 0: 城市中心（始终工作，不占人口）
-  const centerCoord: HexCoord = { q: 0, r: 0 };
-  board.set(hexKey(centerCoord), {
-    coord: centerCoord,
+  board.set(hexKey(center), {
+    coord: center,
     terrain: CITY_CENTER,
     feature: null,
     resource: null,
@@ -24,10 +33,13 @@ export function createBoard(): Map<string, ITile> {
     district: null,
     unlocked: true,
     isWorked: true,
+    goldInvested: 0,
+    productionInvested: 0,
+    ring: 0,
   });
 
   // Ring 1: 已解锁的空格
-  for (const coord of hexRing(centerCoord, 1)) {
+  for (const coord of hexRing(center, 1)) {
     board.set(hexKey(coord), {
       coord,
       terrain: null,
@@ -38,22 +50,30 @@ export function createBoard(): Map<string, ITile> {
       district: null,
       unlocked: true,
       isWorked: false,
+      goldInvested: 0,
+      productionInvested: 0,
+      ring: 1,
     });
   }
 
-  // Ring 2: 锁定的空格（需要人口解锁）
-  for (const coord of hexRing(centerCoord, 2)) {
-    board.set(hexKey(coord), {
-      coord,
-      terrain: null,
-      feature: null,
-      resource: null,
-      improvement: null,
-      improvementLevel: 0,
-      district: null,
-      unlocked: false,
-      isWorked: false,
-    });
+  // Ring 2-4: 锁定的空格
+  for (let r = 2; r <= MAX_RING; r++) {
+    for (const coord of hexRing(center, r)) {
+      board.set(hexKey(coord), {
+        coord,
+        terrain: null,
+        feature: null,
+        resource: null,
+        improvement: null,
+        improvementLevel: 0,
+        district: null,
+        unlocked: false,
+        isWorked: false,
+        goldInvested: 0,
+        productionInvested: 0,
+        ring: r,
+      });
+    }
   }
 
   return board;
@@ -175,7 +195,7 @@ export function getWorkedNonCityCount(board: Map<string, ITile>): number {
   return count;
 }
 
-/** 自动分配工人到产出最高的空闲地块 */
+/** 自动分配工人到产出最高的空闲地块（全局总值最优） */
 export function autoAssignBestWorker(board: Map<string, ITile>): HexCoord | null {
   let bestCoord: HexCoord | null = null;
   let bestValue = -1;
@@ -186,6 +206,32 @@ export function autoAssignBestWorker(board: Map<string, ITile>): HexCoord | null
       const value = totalYieldValue(yields);
       if (value > bestValue) {
         bestValue = value;
+        bestCoord = tile.coord;
+      }
+    }
+  }
+
+  if (bestCoord) {
+    const tile = getTile(board, bestCoord);
+    if (tile) tile.isWorked = true;
+  }
+
+  return bestCoord;
+}
+
+/** 自动分配工人到食物产出最高的空闲地块（粮食优先） */
+export function autoAssignBestFoodWorker(board: Map<string, ITile>): HexCoord | null {
+  let bestCoord: HexCoord | null = null;
+  let bestFood = -1;
+  let bestTotalTieBreak = -1;
+
+  for (const [, tile] of board) {
+    if (tile.terrain && !tile.isWorked && tile.terrain.id !== 'city_center') {
+      const yields = calculateTileYields(board, tile.coord);
+      // 主要按食物排序，食物相同则按总值排序
+      if (yields.food > bestFood || (yields.food === bestFood && totalYieldValue(yields) > bestTotalTieBreak)) {
+        bestFood = yields.food;
+        bestTotalTieBreak = totalYieldValue(yields);
         bestCoord = tile.coord;
       }
     }
@@ -225,37 +271,47 @@ export function autoUnassignWorstWorker(board: Map<string, ITile>): HexCoord | n
 
 // ============ 棋盘空间管理 ============
 
-/** 解锁下一个 Ring-2 格子（优先选择有已放置邻居的） */
-export function unlockNextRing2Hex(board: Map<string, ITile>): HexCoord | null {
-  const ring2Hexes = hexRing({ q: 0, r: 0 }, 2);
+/** 解锁下一个外圈格子（优先低环数，再优先有已放置邻居的） */
+export function unlockNextOuterHex(board: Map<string, ITile>): HexCoord | null {
+  const center: HexCoord = { q: 0, r: 0 };
 
-  let bestCoord: HexCoord | null = null;
-  let bestScore = -1;
+  for (let ring = 2; ring <= MAX_RING; ring++) {
+    const ringHexes = hexRing(center, ring);
 
-  for (const coord of ring2Hexes) {
-    const tile = getTile(board, coord);
-    if (!tile || tile.unlocked) continue;
+    let bestCoord: HexCoord | null = null;
+    let bestScore = -1;
 
-    const neighbors = hexNeighbors(coord);
-    const placedNeighborCount = neighbors.filter(n => {
-      const nt = getTile(board, n);
-      return nt && nt.terrain !== null;
-    }).length;
+    for (const coord of ringHexes) {
+      const tile = getTile(board, coord);
+      if (!tile || tile.unlocked) continue;
 
-    if (placedNeighborCount > bestScore) {
-      bestScore = placedNeighborCount;
-      bestCoord = coord;
+      const neighbors = hexNeighbors(coord);
+      const placedNeighborCount = neighbors.filter(n => {
+        const nt = getTile(board, n);
+        return nt && nt.terrain !== null;
+      }).length;
+
+      // 优先选择有相邻已放置地块的格子
+      const unlockedNeighborCount = neighbors.filter(n => {
+        const nt = getTile(board, n);
+        return nt && nt.unlocked;
+      }).length;
+
+      const score = placedNeighborCount * 10 + unlockedNeighborCount;
+      if (score > bestScore) {
+        bestScore = score;
+        bestCoord = coord;
+      }
+    }
+
+    if (bestCoord) {
+      const tile = getTile(board, bestCoord);
+      if (tile) tile.unlocked = true;
+      return bestCoord;
     }
   }
 
-  if (bestCoord) {
-    const tile = getTile(board, bestCoord);
-    if (tile) {
-      tile.unlocked = true;
-    }
-  }
-
-  return bestCoord;
+  return null;
 }
 
 /** 获取所有已解锁且为空的格子 */
@@ -280,12 +336,42 @@ export function getBuildableHexes(board: Map<string, ITile>): HexCoord[] {
   return result;
 }
 
-/** 获取 Ring-2 已解锁数量 */
-export function getRing2UnlockedCount(board: Map<string, ITile>): number {
+/** 获取指定环的已解锁数量 */
+export function getRingUnlockedCount(board: Map<string, ITile>, ring: number): number {
+  const center: HexCoord = { q: 0, r: 0 };
   let count = 0;
-  for (const coord of hexRing({ q: 0, r: 0 }, 2)) {
+  for (const coord of hexRing(center, ring)) {
     const tile = getTile(board, coord);
     if (tile && tile.unlocked) count++;
+  }
+  return count;
+}
+
+/** 获取所有可金币解锁的锁定格子 (需要至少一个相邻已解锁格) */
+export function getGoldUnlockableHexes(board: Map<string, ITile>): ITile[] {
+  const result: ITile[] = [];
+  for (const [, tile] of board) {
+    if (tile.unlocked || tile.ring <= 1) continue;
+
+    // 至少有一个相邻已解锁的格子
+    const neighbors = hexNeighbors(tile.coord);
+    const hasUnlockedNeighbor = neighbors.some(n => {
+      const nt = getTile(board, n);
+      return nt && nt.unlocked;
+    });
+
+    if (hasUnlockedNeighbor) {
+      result.push(tile);
+    }
+  }
+  return result;
+}
+
+/** 获取总外圈已解锁数量 */
+export function getTotalOuterUnlockedCount(board: Map<string, ITile>): number {
+  let count = 0;
+  for (const [, tile] of board) {
+    if (tile.ring >= 2 && tile.unlocked) count++;
   }
   return count;
 }

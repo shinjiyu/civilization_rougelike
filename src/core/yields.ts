@@ -47,7 +47,7 @@ export function yieldsToString(y: IYields): string {
   if (y.production) parts.push(`${y.production}⚙️`);
   if (y.science) parts.push(`${y.science}🔬`);
   if (y.culture) parts.push(`${y.culture}🎭`);
-  if (y.faith) parts.push(`${y.faith}⛪`);
+  if (y.faith) parts.push(`${y.faith}🙏`);
   return parts.join(' ') || '无产出';
 }
 
@@ -77,7 +77,7 @@ export function yieldIcon(key: keyof IYields): string {
     production: '⚙️',
     science: '🔬',
     culture: '🎭',
-    faith: '⛪',
+    faith: '🙏',
   };
   return icons[key];
 }

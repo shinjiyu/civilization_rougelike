@@ -2,7 +2,10 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <title>文明精铺 Roguelike</title>
     <style>
       /* 防止加载闪烁 */
@@ -16,33 +19,60 @@
     <div id="app">
       <!-- 顶部 HUD -->
       <div id="hud">
-        <div id="hud-turn">回合 0/20</div>
+        <div id="hud-turn">回合 0/25</div>
         <div id="hud-yields"></div>
         <div id="hud-score">得分 <span class="score-value">0</span></div>
       </div>
 
       <!-- 主体 -->
       <div id="main">
+        <!-- 左侧面板：商店+道具 -->
+        <div id="left-panel" class="side-panel">
+          <div class="panel-toggle" id="toggle-left">
+            <span>🏪 商店区</span>
+            <span class="toggle-arrow">▼</span>
+          </div>
+          <div class="panel-body" id="left-panel-body">
+            <!-- 商店 -->
+            <div id="shop-panel">
+              <h3>
+                <span>商店</span>
+              </h3>
+              <div id="shop-cards"></div>
+            </div>
+
+            <!-- 道具入口 -->
+            <div id="item-shop-panel">
+              <h3>🎁 道具商店</h3>
+              <div id="item-shop-entries"></div>
+              <div id="eureka-badges"></div>
+            </div>
+
+            <!-- 道具背包 -->
+            <div id="item-inventory-panel" style="display: none">
+              <h3>📦 道具背包</h3>
+              <div id="item-inventory"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- 棋盘 -->
         <div id="board-container">
           <canvas id="board-canvas"></canvas>
         </div>
 
-        <!-- 右侧面板 -->
-        <div id="side-panel">
-          <!-- 商店 -->
-          <div id="shop-panel">
-            <h3>
-              <span>商店</span>
-            </h3>
-            <div id="shop-cards"></div>
+        <!-- 右侧面板：地块信息+建造 -->
+        <div id="right-panel" class="side-panel collapsed">
+          <div class="panel-toggle" id="toggle-right">
+            <span>🔧 改良区</span>
+            <span class="toggle-arrow">▼</span>
           </div>
-
-          <!-- 地块信息 -->
-          <div id="info-panel">
-            <h3>地块信息</h3>
-            <div id="tile-info">
-              <div style="color: #607080">点击地块查看详情和操作</div>
+          <div class="panel-body" id="right-panel-body">
+            <div id="info-panel">
+              <h3>地块信息</h3>
+              <div id="tile-info">
+                <div style="color: #607080">点击地块查看详情和操作</div>
+              </div>
             </div>
           </div>
         </div>
@@ -52,12 +82,61 @@
       <div id="action-bar">
         <button id="btn-end-turn" class="action-btn primary">结束回合</button>
         <button id="btn-reroll" class="action-btn">刷新 2🪙</button>
+        <button id="btn-reassign-food" class="action-btn">🌾 粮食优先</button>
+        <button id="btn-reassign-all" class="action-btn">⚡ 全局最优</button>
         <button id="btn-new-game" class="action-btn">新游戏</button>
+        <button id="btn-rules" class="action-btn">📖 规则</button>
+        <button id="btn-settings" class="action-btn">⚙ 设置</button>
       </div>
 
       <!-- 游戏结束叠加层 -->
       <div id="game-over-overlay">
         <div id="game-over-content"></div>
+      </div>
+
+      <!-- 道具商店叠加层 -->
+      <div id="item-shop-overlay">
+        <div id="item-shop-content">
+          <h2 id="item-shop-title">🎁 道具商店</h2>
+          <div id="item-shop-offerings"></div>
+          <button
+            id="btn-close-item-shop"
+            class="action-btn"
+            style="margin-top: 16px; width: 100%"
+          >
+            跳过（不选择）
+          </button>
+        </div>
+      </div>
+
+      <!-- 规则说明叠加层 -->
+      <div id="rules-overlay">
+        <div id="rules-content">
+          <div id="rules-body"></div>
+          <button
+            id="btn-close-rules"
+            class="action-btn"
+            style="margin-top: 16px; width: 100%"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+
+      <!-- 设置面板叠加层 -->
+      <div id="settings-overlay">
+        <div id="settings-content">
+          <h2>游戏设置</h2>
+          <p class="settings-hint">修改后下一局新游戏生效</p>
+          <div id="settings-grid"></div>
+          <div class="settings-actions">
+            <button id="btn-save-settings" class="action-btn primary">
+              保存
+            </button>
+            <button id="btn-reset-settings" class="action-btn">恢复默认</button>
+            <button id="btn-close-settings" class="action-btn">关闭</button>
+          </div>
+        </div>
       </div>
 
       <!-- 提示信息 -->

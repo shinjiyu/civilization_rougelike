@@ -105,3 +105,8 @@ export function generateShopCards(
 export function resetCardCounter(): void {
   cardIdCounter = 0;
 }
+
+/** 设置卡牌ID计数器（存档恢复时调用） */
+export function setCardCounter(val: number): void {
+  cardIdCounter = val;
+}

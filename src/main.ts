@@ -1,8 +1,10 @@
 /**
  * 应用入口
  * 初始化引擎、渲染器、UI管理器，启动游戏
+ * 支持 localStorage 自动存档/恢复
  */
 
+import { loadConfig } from './core/config';
 import { GameEngine } from './game/engine';
 import { HexRenderer } from './ui/hex-renderer';
 import './ui/styles.css';
@@ -14,8 +16,11 @@ function main(): void {
     throw new Error('Canvas element not found');
   }
 
+  // 0. 加载配置
+  const config = loadConfig();
+
   // 1. 创建游戏引擎（逻辑层）
-  const engine = new GameEngine();
+  const engine = new GameEngine(config);
 
   // 2. 创建渲染器（视图层 - Canvas）
   const renderer = new HexRenderer(canvas, engine);
@@ -23,8 +28,18 @@ function main(): void {
   // 3. 创建 UI 管理器（视图层 - DOM）
   const ui = new UIManager(engine, renderer);
 
-  // 4. 启动游戏
-  engine.startNewGame();
+  // 4. 尝试从 localStorage 恢复存档，否则开始新游戏
+  const restored = engine.loadFromStorage();
+  if (!restored) {
+    engine.startNewGame();
+  }
+
+  // 5. 自动存档：每次状态变化后写入 localStorage
+  engine.on((event) => {
+    if (event === 'state_changed') {
+      engine.saveToStorage();
+    }
+  });
 
   // 暴露到全局（调试用）
   if (import.meta.env.DEV) {

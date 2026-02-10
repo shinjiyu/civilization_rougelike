@@ -90,6 +90,8 @@ export interface IImprovement {
   icon: string;
   /** 建造所需生产力 */
   productionCost: number;
+  /** 适用地形说明（UI展示用） */
+  terrainHint?: string;
 }
 
 // ============ 区域 ============
@@ -119,6 +121,12 @@ export interface ITile {
   unlocked: boolean;
   /** 是否有工人在此工作（只有工作中的地块才产出） */
   isWorked: boolean;
+  /** 已投入的金币（购买地块时的卡牌费用） */
+  goldInvested: number;
+  /** 已投入的生产力（建造/升级改良与区域） */
+  productionInvested: number;
+  /** 所属环数 (0=中心, 1-4=外圈) */
+  ring: number;
 }
 
 // ============ 商店卡牌（仅地块） ============
@@ -135,6 +143,42 @@ export interface IShopCard {
   terrain: ITerrain;
   feature?: IFeature;
   resource?: IResource;
+}
+
+// ============ 道具系统 ============
+
+export type ItemPool = 'gold' | 'culture' | 'faith';
+
+export interface IItemEffect {
+  type: 'flat_per_turn' | 'per_tag' | 'yield_percent' | 'instant' | 'pop_growth';
+  /** flat_per_turn / per_tag: 产出加成 */
+  yields?: Partial<IYields>;
+  /** per_tag: 匹配的 tag */
+  matchTag?: string;
+  /** yield_percent: 目标 yield */
+  yieldKey?: keyof IYields;
+  /** yield_percent: 百分比增幅 (30 = +30%) */
+  percent?: number;
+}
+
+export interface IItemDef {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  pool: ItemPool;
+  rarity: 1 | 2 | 3;
+  effects: IItemEffect[];
+}
+
+export interface IEurekaDef {
+  id: string;
+  /** 在第几回合检查 */
+  checkTurn: number;
+  /** 奖励的商店池 */
+  pool: ItemPool;
+  /** 条件描述（UI展示） */
+  description: string;
 }
 
 // ============ 游戏状态 ============
@@ -169,13 +213,20 @@ export interface IGameState {
 
   // 商店
   shopCards: IShopCard[];
+  shopCardLocks: boolean[];
   selectedCard: IShopCard | null;
 
   // 棋盘
   board: Map<string, ITile>;
 
-  // 已解锁的 Ring-2 格子数
-  unlockedRing2Count: number;
+  // 已通过人口解锁的外圈格子数
+  unlockedOuterCount: number;
+
+  // 道具系统
+  items: IItemDef[];
+  eurekaTriggered: string[];
+  /** 可用的免费道具商店入场券 [pool名称] */
+  freeItemShopEntries: ItemPool[];
 }
 
 // ============ 卡牌模板（用于卡池定义，仅地块） ============

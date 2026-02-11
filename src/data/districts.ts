@@ -34,6 +34,8 @@ export const CAMPUS: IDistrict = {
   tags: ['campus', 'district', 'science_district'],
   icon: '🔬',
   productionCost: 15,
+  maxLevel: 99,
+  upgradePrimaryYield: 'science',
 };
 
 export const COMMERCIAL_HUB: IDistrict = {
@@ -58,6 +60,8 @@ export const COMMERCIAL_HUB: IDistrict = {
   tags: ['commercial_hub', 'district', 'gold_district'],
   icon: '💰',
   productionCost: 15,
+  maxLevel: 99,
+  upgradePrimaryYield: 'gold',
 };
 
 export const HOLY_SITE: IDistrict = {
@@ -82,6 +86,8 @@ export const HOLY_SITE: IDistrict = {
   tags: ['holy_site', 'district', 'faith_district'],
   icon: '🙏',
   productionCost: 15,
+  maxLevel: 99,
+  upgradePrimaryYield: 'faith',
 };
 
 export const THEATER_SQUARE: IDistrict = {
@@ -100,6 +106,8 @@ export const THEATER_SQUARE: IDistrict = {
   tags: ['theater_square', 'district', 'culture_district'],
   icon: '🎭',
   productionCost: 15,
+  maxLevel: 99,
+  upgradePrimaryYield: 'culture',
 };
 
 export const INDUSTRIAL_ZONE: IDistrict = {
@@ -124,6 +132,8 @@ export const INDUSTRIAL_ZONE: IDistrict = {
   tags: ['industrial_zone', 'district', 'production_district'],
   icon: '🏭',
   productionCost: 15,
+  maxLevel: 99,
+  upgradePrimaryYield: 'production',
 };
 
 /** 所有区域 registry */

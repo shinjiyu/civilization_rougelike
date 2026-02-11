@@ -106,6 +106,10 @@ export interface IDistrict {
   icon: string;
   /** 建造所需生产力 */
   productionCost: number;
+  /** 最大等级 (默认3) */
+  maxLevel: number;
+  /** 每级额外加成的主要yield key */
+  upgradePrimaryYield: keyof IYields;
 }
 
 // ============ 地块（棋盘格子） ============
@@ -118,6 +122,7 @@ export interface ITile {
   improvement: IImprovement | null;
   improvementLevel: number;
   district: IDistrict | null;
+  districtLevel: number;
   unlocked: boolean;
   /** 是否有工人在此工作（只有工作中的地块才产出） */
   isWorked: boolean;
@@ -150,15 +155,31 @@ export interface IShopCard {
 export type ItemPool = 'gold' | 'culture' | 'faith';
 
 export interface IItemEffect {
-  type: 'flat_per_turn' | 'per_tag' | 'yield_percent' | 'instant' | 'pop_growth';
-  /** flat_per_turn / per_tag: 产出加成 */
+  type:
+  | 'flat_per_turn' | 'per_tag' | 'yield_percent' | 'instant' | 'pop_growth'
+  | 'terrain_alias' | 'convert_yield' | 'per_adjacent_pair';
+  /** flat_per_turn / per_tag / instant / per_adjacent_pair: 产出加成 */
   yields?: Partial<IYields>;
-  /** per_tag: 匹配的 tag */
+  /** per_tag / per_adjacent_pair: 主匹配 tag */
   matchTag?: string;
   /** yield_percent: 目标 yield */
   yieldKey?: keyof IYields;
-  /** yield_percent: 百分比增幅 (30 = +30%) */
+  /** yield_percent: 百分比增幅 (8 = +8%, 叠乘) */
   percent?: number;
+  /** per_tag / per_adjacent_pair: 即使地块未分配工人也生效 */
+  ignoreWorked?: boolean;
+  /** terrain_alias: 源地形 tag */
+  fromTag?: string;
+  /** terrain_alias: 视为此 tag (扩展匹配) */
+  toTag?: string;
+  /** per_adjacent_pair: 邻居需匹配的 tag */
+  secondTag?: string;
+  /** convert_yield: 来源 yield */
+  fromYieldKey?: keyof IYields;
+  /** convert_yield: 目标 yield */
+  toYieldKey?: keyof IYields;
+  /** convert_yield: 转化比例 (0~1, 如 0.2 = 20%) */
+  convertRatio?: number;
 }
 
 export interface IItemDef {

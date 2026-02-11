@@ -10,7 +10,7 @@ export const FARM: IImprovement = {
   id: 'farm',
   name: '农场',
   yields: { gold: 0, food: 2, production: 0, science: 0, culture: 0, faith: 0 },
-  maxLevel: 3,
+  maxLevel: 99,
   upgradePrimaryYield: 'food',
   adjacencyRules: [
     {
@@ -31,7 +31,7 @@ export const MINE: IImprovement = {
   id: 'mine',
   name: '矿山',
   yields: { gold: 0, food: 0, production: 2, science: 0, culture: 0, faith: 0 },
-  maxLevel: 3,
+  maxLevel: 99,
   upgradePrimaryYield: 'production',
   adjacencyRules: [
     {
@@ -52,7 +52,7 @@ export const TRADING_POST: IImprovement = {
   id: 'trading_post',
   name: '商站',
   yields: { gold: 3, food: 0, production: 0, science: 0, culture: 0, faith: 0 },
-  maxLevel: 3,
+  maxLevel: 99,
   upgradePrimaryYield: 'gold',
   adjacencyRules: [
     {
@@ -73,7 +73,7 @@ export const LUMBER_MILL: IImprovement = {
   id: 'lumber_mill',
   name: '伐木场',
   yields: { gold: 0, food: 0, production: 2, science: 0, culture: 0, faith: 0 },
-  maxLevel: 3,
+  maxLevel: 99,
   upgradePrimaryYield: 'production',
   adjacencyRules: [],
   placementRequireTags: ['forest'],
@@ -87,7 +87,7 @@ export const PLANTATION: IImprovement = {
   id: 'plantation',
   name: '种植园',
   yields: { gold: 1, food: 1, production: 0, science: 0, culture: 0, faith: 0 },
-  maxLevel: 3,
+  maxLevel: 99,
   upgradePrimaryYield: 'gold',
   adjacencyRules: [
     {
@@ -109,7 +109,7 @@ export const SOLAR_FARM: IImprovement = {
   id: 'solar_farm',
   name: '太阳能农场',
   yields: { gold: 1, food: 0, production: 2, science: 1, culture: 0, faith: 0 },
-  maxLevel: 3,
+  maxLevel: 99,
   upgradePrimaryYield: 'production',
   adjacencyRules: [
     {
@@ -131,7 +131,7 @@ export const HUNTING_GROUND: IImprovement = {
   id: 'hunting_ground',
   name: '猎场',
   yields: { gold: 1, food: 2, production: 0, science: 0, culture: 0, faith: 0 },
-  maxLevel: 3,
+  maxLevel: 99,
   upgradePrimaryYield: 'food',
   adjacencyRules: [
     {

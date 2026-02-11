@@ -12,6 +12,30 @@ import { CITY_CENTER } from '../data/terrains';
 /** 最大环数 */
 export const MAX_RING = 4;
 
+/**
+ * 升级收益（几何递减边际收益）
+ * 早期给 +4, +2, +2, +2, 之后每级稳定 +1
+ * @param level 当前等级 (>=1)
+ * @returns 累计主产出加成
+ */
+export function upgradeYieldBonus(level: number): number {
+  if (level <= 1) return 0;
+  let total = 0;
+  for (let l = 2; l <= level; l++) {
+    total += Math.max(1, Math.floor(4 / Math.sqrt(l - 1)));
+  }
+  return total;
+}
+
+/**
+ * 升级时该级的边际收益 (用于 UI 显示)
+ * @param nextLevel 即将升到的等级
+ */
+export function upgradeMarginalYield(nextLevel: number): number {
+  if (nextLevel <= 1) return 0;
+  return Math.max(1, Math.floor(4 / Math.sqrt(nextLevel - 1)));
+}
+
 /** 获取六角格所在的环数 (距离中心的距离) */
 export function getHexRing(coord: HexCoord): number {
   return hexDistance(coord, { q: 0, r: 0 });
@@ -31,6 +55,7 @@ export function createBoard(): Map<string, ITile> {
     improvement: null,
     improvementLevel: 0,
     district: null,
+    districtLevel: 0,
     unlocked: true,
     isWorked: true,
     goldInvested: 0,
@@ -48,6 +73,7 @@ export function createBoard(): Map<string, ITile> {
       improvement: null,
       improvementLevel: 0,
       district: null,
+      districtLevel: 0,
       unlocked: true,
       isWorked: false,
       goldInvested: 0,
@@ -67,6 +93,7 @@ export function createBoard(): Map<string, ITile> {
         improvement: null,
         improvementLevel: 0,
         district: null,
+        districtLevel: 0,
         unlocked: false,
         isWorked: false,
         goldInvested: 0,
@@ -99,6 +126,26 @@ export function tileHasTag(tile: ITile, tag: string): boolean {
   if (tile.resource?.tags.includes(tag)) return true;
   if (tile.improvement?.tags.includes(tag)) return true;
   if (tile.district?.tags.includes(tag)) return true;
+  return false;
+}
+
+/**
+ * 带别名的 tag 检查
+ * aliasReverse: Map<目标tag, 源tag[]>
+ * 例如 alias "mountain→cold" 时，aliasReverse.get("cold") = ["mountain"]
+ */
+export function tileHasTagWithAliases(
+  tile: ITile,
+  tag: string,
+  aliasReverse: Map<string, string[]>,
+): boolean {
+  if (tileHasTag(tile, tag)) return true;
+  const sources = aliasReverse.get(tag);
+  if (sources) {
+    for (const src of sources) {
+      if (tileHasTag(tile, src)) return true;
+    }
+  }
   return false;
 }
 
@@ -147,11 +194,11 @@ export function calculateTileYields(
   if (tile.improvement) {
     yields = addYields(yields, tile.improvement.yields);
 
-    // 升级加成：每级 +1 主要产出
+    // 升级加成 (递减边际): Lv2 → +4, Lv3 → +6, Lv4 → +8, ...
     if (tile.improvementLevel > 1) {
-      const upgradeBonus = emptyYields();
-      upgradeBonus[tile.improvement.upgradePrimaryYield] = tile.improvementLevel - 1;
-      yields = addYields(yields, upgradeBonus);
+      const bonus = emptyYields();
+      bonus[tile.improvement.upgradePrimaryYield] = upgradeYieldBonus(tile.improvementLevel);
+      yields = addYields(yields, bonus);
     }
 
     for (const rule of tile.improvement.adjacencyRules) {
@@ -159,9 +206,16 @@ export function calculateTileYields(
     }
   }
 
-  // 5. 区域产出 + 邻接
+  // 5. 区域产出 + 邻接 + 区域升级加成
   if (tile.district) {
     yields = addYields(yields, tile.district.baseYields);
+
+    // 区域升级加成 (递减边际)
+    if (tile.districtLevel > 1 && tile.district.upgradePrimaryYield) {
+      const bonus = emptyYields();
+      bonus[tile.district.upgradePrimaryYield] = upgradeYieldBonus(tile.districtLevel);
+      yields = addYields(yields, bonus);
+    }
 
     for (const rule of tile.district.adjacencyRules) {
       yields = addYields(yields, calculateAdjacencyBonus(rule, neighbors));

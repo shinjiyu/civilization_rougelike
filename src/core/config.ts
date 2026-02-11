@@ -16,6 +16,8 @@ export interface IGameConfig {
   growthFoodPerPop: number;
   /** 改良升级费用（每级） */
   productionPerUpgrade: number;
+  /** 区域升级费用（每级） */
+  districtUpgradeCost: number;
   /** 商店刷新费用 */
   rerollCost: number;
   /** 出售地块返还比例 (0~1) */
@@ -45,15 +47,16 @@ export const DEFAULT_CONFIG: IGameConfig = {
   baseGrowthFood: 4,
   growthFoodPerPop: 4,
   productionPerUpgrade: 10,
+  districtUpgradeCost: 20,
   rerollCost: 2,
   sellRefundRatio: 0.5,
   shopCardCount: 4,
   hexUnlockCostRing2: 5,
   hexUnlockCostRing3: 10,
   hexUnlockCostRing4: 20,
-  itemShopGoldCost: 20,
-  itemShopCultureCost: 20,
-  itemShopFaithCost: 20,
+  itemShopGoldCost: 40,
+  itemShopCultureCost: 35,
+  itemShopFaithCost: 35,
   itemShopOfferingCount: 3,
 };
 
@@ -89,14 +92,15 @@ export const CONFIG_META: { key: keyof IGameConfig; label: string; min: number; 
   { key: 'baseGrowthFood', label: '基础增长食物', min: 2, max: 50, step: 1 },
   { key: 'growthFoodPerPop', label: '每人口额外增长需求', min: 0, max: 10, step: 1 },
   { key: 'productionPerUpgrade', label: '改良升级费用', min: 1, max: 50, step: 1 },
+  { key: 'districtUpgradeCost', label: '区域升级费用', min: 5, max: 80, step: 5 },
   { key: 'rerollCost', label: '商店刷新费用', min: 0, max: 20, step: 1 },
   { key: 'sellRefundRatio', label: '出售返还比例', min: 0, max: 1, step: 0.1 },
   { key: 'shopCardCount', label: '商店卡牌数', min: 2, max: 8, step: 1 },
   { key: 'hexUnlockCostRing2', label: '2环解锁费用', min: 1, max: 20, step: 1 },
   { key: 'hexUnlockCostRing3', label: '3环解锁费用', min: 1, max: 30, step: 1 },
   { key: 'hexUnlockCostRing4', label: '4环解锁费用', min: 1, max: 50, step: 1 },
-  { key: 'itemShopGoldCost', label: '道具商店金币门票', min: 1, max: 30, step: 1 },
-  { key: 'itemShopCultureCost', label: '道具商店文化门票', min: 1, max: 30, step: 1 },
-  { key: 'itemShopFaithCost', label: '道具商店信仰门票', min: 1, max: 30, step: 1 },
+  { key: 'itemShopGoldCost', label: '道具商店金币门票', min: 5, max: 80, step: 5 },
+  { key: 'itemShopCultureCost', label: '道具商店文化门票', min: 5, max: 80, step: 5 },
+  { key: 'itemShopFaithCost', label: '道具商店信仰门票', min: 5, max: 80, step: 5 },
   { key: 'itemShopOfferingCount', label: '道具商店可选数', min: 2, max: 6, step: 1 },
 ];

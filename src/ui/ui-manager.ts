@@ -11,13 +11,23 @@ import { addYields, emptyYields, yieldColor, yieldIcon, yieldsToString } from '.
 import { DISTRICT_REGISTRY } from '../data/districts';
 import { IMPROVEMENT_REGISTRY } from '../data/improvements';
 import { EUREKA_DEFS } from '../data/items';
-import { calculateAdjacencyBonus, getNeighborTiles, tileHasTag } from '../game/board';
+import { calculateAdjacencyBonus, getNeighborTiles, tileHasTag, upgradeMarginalYield } from '../game/board';
 import { GameEngine } from '../game/engine';
-import type { HexRenderer } from './hex-renderer';
+/** 渲染器接口 - 2D和3D渲染器都实现此接口 */
+interface IHexRenderer {
+  onHexClick: ((coord: HexCoord) => void) | null;
+  onHexHover: ((coord: HexCoord | null) => void) | null;
+  setValidPlacements(coords: HexCoord[]): void;
+  clearValidPlacements(): void;
+  setSelectedHex(coord: HexCoord | null): void;
+  draw(): void;
+  toggleYieldLabels(): void;
+  getYieldLabelsVisible(): boolean;
+}
 
 export class UIManager {
   private engine: GameEngine;
-  private renderer: HexRenderer;
+  private renderer: IHexRenderer;
 
   private hudTurn!: HTMLElement;
   private hudYields!: HTMLElement;
@@ -43,7 +53,7 @@ export class UIManager {
   private isMobile = false;
   private mobileQuery: MediaQueryList;
 
-  constructor(engine: GameEngine, renderer: HexRenderer) {
+  constructor(engine: GameEngine, renderer: IHexRenderer) {
     this.engine = engine;
     this.renderer = renderer;
     this.mobileQuery = window.matchMedia('(max-width: 768px)');
@@ -64,6 +74,7 @@ export class UIManager {
     this.bindSettingsActions();
     this.bindItemShopActions();
     this.bindPanelToggles();
+    this.createYieldToggleButton();
   }
 
   private cacheElements(): void {
@@ -335,6 +346,24 @@ export class UIManager {
       rightPanel.classList.toggle('collapsed', !wasCollapsed);
       if (wasCollapsed) leftPanel.classList.add('collapsed');
     }
+  }
+
+  // -------- 收益标签显隐按钮 --------
+
+  private createYieldToggleButton(): void {
+    const container = document.getElementById('board-container')!;
+    const btn = document.createElement('button');
+    btn.id = 'btn-toggle-yields';
+    btn.className = 'yield-toggle-btn';
+    btn.textContent = '📊';
+    btn.title = '显示/隐藏收益标签';
+    btn.addEventListener('click', () => {
+      this.renderer.toggleYieldLabels();
+      const visible = this.renderer.getYieldLabelsVisible();
+      btn.classList.toggle('off', !visible);
+      btn.title = visible ? '隐藏收益标签' : '显示收益标签';
+    });
+    container.appendChild(btn);
   }
 
   private updateItemShopPanel(): void {
@@ -900,7 +929,7 @@ export class UIManager {
       html += `<div class="info-row"><span class="info-label">改良</span><span class="info-value">${tile.improvement.icon} ${tile.improvement.name} Lv${tile.improvementLevel}</span></div>`;
     }
     if (tile.district) {
-      html += `<div class="info-row"><span class="info-label">区域</span><span class="info-value">${tile.district.icon} ${tile.district.name}</span></div>`;
+      html += `<div class="info-row"><span class="info-label">区域</span><span class="info-value">${tile.district.icon} ${tile.district.name} Lv${tile.districtLevel}</span></div>`;
     }
 
     // ---- 产出 ----
@@ -1012,14 +1041,30 @@ export class UIManager {
       }
       html += '</div>';
 
-      // 改良升级
-      if (tile.improvement && tile.improvementLevel < tile.improvement.maxLevel) {
-        const upgCost = this.engine.getProductionPerUpgrade();
+      // 改良升级 (几何费用, 递减边际)
+      if (tile.improvement) {
+        const upgCost = this.engine.getImprovementUpgradeCost(tile.improvementLevel);
+        const delta = upgradeMarginalYield(tile.improvementLevel + 1);
         const canUpgrade = state.storedProduction >= upgCost;
         html += `
           <div class="info-section">
             <button class="build-action-btn upgrade-btn" data-action="upgrade-improvement" ${canUpgrade ? '' : 'disabled'}>
-              <span>⬆️ 升级至 Lv${tile.improvementLevel + 1}</span>
+              <span>⬆️ 升级至 Lv${tile.improvementLevel + 1} <small style="color:var(--accent-green)">(+${delta})</small></span>
+              <span style="color:var(--accent-orange)">${upgCost}⚙️</span>
+            </button>
+          </div>
+        `;
+      }
+
+      // 区域升级 (几何费用, 递减边际)
+      if (tile.district) {
+        const upgCost = this.engine.getDistrictLevelUpCost(tile.districtLevel);
+        const delta = upgradeMarginalYield(tile.districtLevel + 1);
+        const canUpgrade = state.storedProduction >= upgCost;
+        html += `
+          <div class="info-section">
+            <button class="build-action-btn upgrade-btn" data-action="upgrade-improvement" ${canUpgrade ? '' : 'disabled'}>
+              <span>⬆️ ${tile.district.icon} 升级至 Lv${tile.districtLevel + 1} <small style="color:var(--accent-green)">(+${delta})</small></span>
               <span style="color:var(--accent-orange)">${upgCost}⚙️</span>
             </button>
           </div>

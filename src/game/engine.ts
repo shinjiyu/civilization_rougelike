@@ -29,6 +29,7 @@ import {
   getTile,
   getWorkedNonCityCount,
   tileHasTag,
+  tileHasTagWithAliases,
   unlockNextOuterHex,
 } from './board';
 import { generateShopCards, resetCardCounter, setCardCounter } from './shop';
@@ -100,7 +101,7 @@ export class GameEngine {
       q: number; r: number;
       terrainId: string | null; featureId: string | null; resourceId: string | null;
       improvementId: string | null; improvementLevel: number;
-      districtId: string | null;
+      districtId: string | null; districtLevel: number;
       unlocked: boolean; isWorked: boolean;
       goldInvested: number; productionInvested: number; ring: number;
     }][] = [];
@@ -114,6 +115,7 @@ export class GameEngine {
         improvementId: tile.improvement?.id ?? null,
         improvementLevel: tile.improvementLevel,
         districtId: tile.district?.id ?? null,
+        districtLevel: tile.districtLevel,
         unlocked: tile.unlocked,
         isWorked: tile.isWorked,
         goldInvested: tile.goldInvested,
@@ -186,6 +188,7 @@ export class GameEngine {
           improvement: st.improvementId ? IMPROVEMENT_REGISTRY[st.improvementId] ?? null : null,
           improvementLevel: st.improvementLevel || 0,
           district: st.districtId ? DISTRICT_REGISTRY[st.districtId] ?? null : null,
+          districtLevel: st.districtLevel || 0,
           unlocked: st.unlocked,
           isWorked: st.isWorked,
           goldInvested: st.goldInvested || 0,
@@ -292,56 +295,95 @@ export class GameEngine {
     return calculateTileYields(this.state.board, coord);
   }
 
+  // ---- 道具别名系统 ----
+
+  /** 从已持有道具构建反向别名表: toTag → fromTag[] */
+  private buildAliasMap(): Map<string, string[]> {
+    const map = new Map<string, string[]>();
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'terrain_alias' && effect.fromTag && effect.toTag) {
+          const list = map.get(effect.toTag) || [];
+          if (!list.includes(effect.fromTag)) list.push(effect.fromTag);
+          map.set(effect.toTag, list);
+        }
+      }
+    }
+    return map;
+  }
+
+  /** 将 Partial<IYields> 归一化为完整 IYields */
+  private static fy(y: Partial<IYields> | undefined): IYields {
+    return {
+      gold: y?.gold || 0, food: y?.food || 0, production: y?.production || 0,
+      science: y?.science || 0, culture: y?.culture || 0, faith: y?.faith || 0,
+    };
+  }
+
   /**
    * 计算道具对单个地块的加成
-   * - per_tag: 如果此地块匹配 tag，返回该道具提供的加成
-   * - yield_percent: 按百分比增幅此地块的基础产出
-   * （flat_per_turn 是全局加成，不归属于单个地块）
+   * - per_tag (含 ignoreWorked / 别名): 匹配地块获得加成
+   * - per_adjacent_pair: 与特定邻居相邻时获得加成
+   * - yield_percent: 叠乘作用于此地块基础+平坦加成
    */
   getItemBonusForTile(coord: HexCoord): IYields {
     const tile = getTile(this.state.board, coord);
-    if (!tile || !tile.terrain || !tile.isWorked) return emptyYields();
+    if (!tile || !tile.terrain) return emptyYields();
 
-    const baseYields = calculateTileYields(this.state.board, coord);
+    const aliases = this.buildAliasMap();
     let bonus = emptyYields();
 
-    // Pass 1: per_tag bonuses attributable to this tile
+    // Pass 1: per_tag
     for (const item of this.state.items) {
       for (const effect of item.effects) {
         if (effect.type === 'per_tag' && effect.matchTag && effect.yields) {
-          if (tileHasTag(tile, effect.matchTag)) {
-            const ey = effect.yields;
-            bonus = addYields(bonus, {
-              gold: ey.gold || 0,
-              food: ey.food || 0,
-              production: ey.production || 0,
-              science: ey.science || 0,
-              culture: ey.culture || 0,
-              faith: ey.faith || 0,
-            });
+          if (!tile.isWorked && !effect.ignoreWorked) continue;
+          if (tileHasTagWithAliases(tile, effect.matchTag, aliases)) {
+            bonus = addYields(bonus, GameEngine.fy(effect.yields));
           }
         }
       }
     }
 
-    // Pass 2: yield_percent (线性加合后一次性作用于此地块基础产出)
-    const pctBonuses: Partial<Record<keyof IYields, number>> = {};
+    // Pass 2: per_adjacent_pair
     for (const item of this.state.items) {
       for (const effect of item.effects) {
-        if (effect.type === 'yield_percent' && effect.yieldKey && effect.percent) {
-          pctBonuses[effect.yieldKey] = (pctBonuses[effect.yieldKey] || 0) + effect.percent;
+        if (effect.type === 'per_adjacent_pair' && effect.matchTag && effect.secondTag && effect.yields) {
+          if (!tile.isWorked && !effect.ignoreWorked) continue;
+          if (tileHasTagWithAliases(tile, effect.matchTag, aliases)) {
+            const hasNeighbor = hexNeighbors(coord).some(n => {
+              const nt = getTile(this.state.board, n);
+              return nt && nt.terrain && tileHasTagWithAliases(nt, effect.secondTag!, aliases);
+            });
+            if (hasNeighbor) {
+              bonus = addYields(bonus, GameEngine.fy(effect.yields));
+            }
+          }
         }
       }
     }
-    for (const [key, pct] of Object.entries(pctBonuses) as [keyof IYields, number][]) {
-      if (pct > 0) {
-        const pctBonus = Math.floor(baseYields[key] * pct / 100);
-        if (pctBonus > 0) {
-          const b = emptyYields();
-          b[key] = pctBonus;
-          bonus = addYields(bonus, b);
+
+    // Pass 3: yield_percent (叠乘) — 仅工作地块
+    if (tile.isWorked) {
+      const baseYields = calculateTileYields(this.state.board, coord);
+      let withBonus = addYields(baseYields, bonus);
+      for (const item of this.state.items) {
+        for (const effect of item.effects) {
+          if (effect.type === 'yield_percent' && effect.yieldKey && effect.percent) {
+            const k = effect.yieldKey;
+            withBonus[k] = Math.floor(withBonus[k] * (1 + effect.percent / 100));
+          }
         }
       }
+      // 返回: 最终 - 基础 = 道具总加成
+      return {
+        gold: withBonus.gold - baseYields.gold,
+        food: withBonus.food - baseYields.food,
+        production: withBonus.production - baseYields.production,
+        science: withBonus.science - baseYields.science,
+        culture: withBonus.culture - baseYields.culture,
+        faith: withBonus.faith - baseYields.faith,
+      };
     }
 
     return bonus;
@@ -509,62 +551,73 @@ export class GameEngine {
 
   /** 应用道具被动效果到产出 */
   private applyItemEffects(baseYields: IYields): IYields {
+    const aliases = this.buildAliasMap();
     let yields = { ...baseYields };
 
-    // Pass 1: flat_per_turn and per_tag bonuses
+    // 1. flat_per_turn
     for (const item of this.state.items) {
       for (const effect of item.effects) {
-        switch (effect.type) {
-          case 'flat_per_turn': {
-            if (effect.yields) {
-              const ey = effect.yields;
-              yields = addYields(yields, {
-                gold: ey.gold || 0,
-                food: ey.food || 0,
-                production: ey.production || 0,
-                science: ey.science || 0,
-                culture: ey.culture || 0,
-                faith: ey.faith || 0,
-              });
-            }
-            break;
-          }
-          case 'per_tag': {
-            if (effect.matchTag && effect.yields) {
-              let count = 0;
-              for (const [, tile] of this.state.board) {
-                if (tile.isWorked && tile.terrain && tileHasTag(tile, effect.matchTag)) {
-                  count++;
-                }
-              }
-              const ey = effect.yields;
-              yields = addYields(yields, scaleYields({
-                gold: ey.gold || 0,
-                food: ey.food || 0,
-                production: ey.production || 0,
-                science: ey.science || 0,
-                culture: ey.culture || 0,
-                faith: ey.faith || 0,
-              }, count));
-            }
-            break;
-          }
+        if (effect.type === 'flat_per_turn' && effect.yields) {
+          yields = addYields(yields, GameEngine.fy(effect.yields));
         }
       }
     }
 
-    // Pass 2: yield_percent bonuses (线性加合：先累加百分比，再一次性应用)
-    const pctBonuses: Partial<Record<keyof IYields, number>> = {};
+    // 2. per_tag (含 ignoreWorked 和别名)
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'per_tag' && effect.matchTag && effect.yields) {
+          let count = 0;
+          for (const [, tile] of this.state.board) {
+            if (!tile.terrain) continue;
+            if (!tile.isWorked && !effect.ignoreWorked) continue;
+            if (tileHasTagWithAliases(tile, effect.matchTag, aliases)) count++;
+          }
+          yields = addYields(yields, scaleYields(GameEngine.fy(effect.yields), count));
+        }
+      }
+    }
+
+    // 3. per_adjacent_pair
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'per_adjacent_pair' && effect.matchTag && effect.secondTag && effect.yields) {
+          let count = 0;
+          for (const [, tile] of this.state.board) {
+            if (!tile.terrain) continue;
+            if (!tile.isWorked && !effect.ignoreWorked) continue;
+            if (tileHasTagWithAliases(tile, effect.matchTag, aliases)) {
+              const hasMatch = hexNeighbors(tile.coord).some(n => {
+                const nt = getTile(this.state.board, n);
+                return nt && nt.terrain && tileHasTagWithAliases(nt, effect.secondTag!, aliases);
+              });
+              if (hasMatch) count++;
+            }
+          }
+          yields = addYields(yields, scaleYields(GameEngine.fy(effect.yields), count));
+        }
+      }
+    }
+
+    // 4. yield_percent (叠乘: 每个效果独立乘算)
     for (const item of this.state.items) {
       for (const effect of item.effects) {
         if (effect.type === 'yield_percent' && effect.yieldKey && effect.percent) {
-          pctBonuses[effect.yieldKey] = (pctBonuses[effect.yieldKey] || 0) + effect.percent;
+          yields[effect.yieldKey] = Math.floor(
+            yields[effect.yieldKey] * (1 + effect.percent / 100),
+          );
         }
       }
     }
-    for (const [key, pct] of Object.entries(pctBonuses) as [keyof IYields, number][]) {
-      if (pct > 0) {
-        yields[key] = Math.floor(yields[key] * (1 + pct / 100));
+
+    // 5. convert_yield (从一种产出转化为另一种, 源减少)
+    for (const item of this.state.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'convert_yield' && effect.fromYieldKey && effect.toYieldKey && effect.convertRatio) {
+          const amount = Math.floor(yields[effect.fromYieldKey] * effect.convertRatio);
+          yields[effect.fromYieldKey] -= amount;
+          yields[effect.toYieldKey] += amount;
+        }
       }
     }
 
@@ -896,6 +949,7 @@ export class GameEngine {
 
     this.state.storedProduction -= district.productionCost;
     tile.district = district;
+    tile.districtLevel = 1;
     tile.improvement = null;
     tile.improvementLevel = 0;
     tile.productionInvested += district.productionCost;
@@ -906,21 +960,45 @@ export class GameEngine {
     return true;
   }
 
-  /** 升级已有改良设施 */
+  /** 升级已有改良设施或区域 (几何倍率费用) */
   upgradeTile(coord: HexCoord): boolean {
     const tile = getTile(this.state.board, coord);
-    if (!tile || !tile.improvement) return false;
-    if (tile.improvementLevel >= tile.improvement.maxLevel) return false;
-    if (this.state.storedProduction < this.config.productionPerUpgrade) return false;
+    if (!tile) return false;
 
-    this.state.storedProduction -= this.config.productionPerUpgrade;
-    tile.improvementLevel++;
-    tile.productionInvested += this.config.productionPerUpgrade;
+    // 优先尝试改良升级
+    if (tile.improvement) {
+      if (tile.improvementLevel >= tile.improvement.maxLevel) return false;
+      const cost = this.getImprovementUpgradeCost(tile.improvementLevel);
+      if (this.state.storedProduction < cost) return false;
+      this.state.storedProduction -= cost;
+      tile.improvementLevel++;
+      tile.productionInvested += cost;
+    } else if (tile.district) {
+      // 区域升级
+      if (tile.districtLevel >= tile.district.maxLevel) return false;
+      const cost = this.getDistrictLevelUpCost(tile.districtLevel);
+      if (this.state.storedProduction < cost) return false;
+      this.state.storedProduction -= cost;
+      tile.districtLevel++;
+      tile.productionInvested += cost;
+    } else {
+      return false;
+    }
 
     this.refreshYieldSnapshot();
     this.emit('tile_upgraded', coord);
     this.emit('state_changed');
     return true;
+  }
+
+  /** 改良升级费用: baseCost × 2^(currentLevel-1) */
+  getImprovementUpgradeCost(currentLevel: number): number {
+    return this.config.productionPerUpgrade * Math.pow(2, currentLevel - 1);
+  }
+
+  /** 区域升级费用: baseCost × 2^(currentLevel-1) */
+  getDistrictLevelUpCost(currentLevel: number): number {
+    return this.config.districtUpgradeCost * Math.pow(2, currentLevel - 1);
   }
 
   // -------- 出售地块 --------
@@ -1214,4 +1292,5 @@ export class GameEngine {
   getRerollCost(): number { return this.config.rerollCost; }
   getFoodPerPop(): number { return this.config.foodPerPop; }
   getProductionPerUpgrade(): number { return this.config.productionPerUpgrade; }
+  getDistrictUpgradeCost(): number { return this.config.districtUpgradeCost; }
 }

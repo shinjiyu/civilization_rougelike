@@ -269,10 +269,25 @@ export class HexRenderer3D {
 
   // ---- Raycasting ----
 
+  /** 检测是否处于竖屏强制横屏旋转模式 */
+  private readonly _portraitMQ = window.matchMedia('(max-width: 768px) and (orientation: portrait)');
+
   private raycastHex(clientX: number, clientY: number): HexCoord | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
-    this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+    if (this._portraitMQ.matches) {
+      // CSS 对 #app 施加了 rotate(90deg) (顺时针)
+      // 屏幕坐标与画布内部坐标轴对应关系:
+      //   屏幕 Y → 画布 X (top=-1, bottom=+1)
+      //   屏幕 X → 画布 Y (left=-1, right=+1)
+      const fx = (clientX - rect.left) / rect.width;
+      const fy = (clientY - rect.top) / rect.height;
+      this.pointer.x = fy * 2 - 1;
+      this.pointer.y = fx * 2 - 1;
+    } else {
+      this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    }
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hits = this.raycaster.intersectObjects(
       Array.from(this.hitMeshes.values()),

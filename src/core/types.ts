@@ -264,6 +264,22 @@ export interface ICardTemplate {
   resourceId?: string;
 }
 
+// ============ 胜利目标 ============
+
+export type VictoryGoalType = 'score' | 'population' | 'gold' | 'faith' | 'science' | 'culture';
+
+export interface IVictoryGoalPreset {
+  type: VictoryGoalType;
+  name: string;
+  icon: string;
+  description: string;
+  /** 默认目标值 */
+  defaultTarget: number;
+  minTarget: number;
+  maxTarget: number;
+  step: number;
+}
+
 // ============ 商店等级配置 ============
 
 export interface IShopLevelConfig {

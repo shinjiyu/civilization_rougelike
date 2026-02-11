@@ -5,12 +5,13 @@
  */
 
 import type { IGameConfig } from '../core/config';
-import { DEFAULT_CONFIG } from '../core/config';
+import { DEFAULT_CONFIG, VICTORY_GOAL_PRESETS } from '../core/config';
 import { hexNeighbors } from '../core/hex';
 import type {
   HexCoord,
   IDistrict,
-  IGameState, IImprovement, IItemDef, IShopCard, ItemPool, IYields
+  IGameState, IImprovement, IItemDef, IShopCard, ItemPool, IYields,
+  VictoryGoalType
 } from '../core/types';
 import { addYields, emptyYields, scaleYields } from '../core/yields';
 import { SHOP_LEVEL_CONFIGS } from '../data/card-pool';
@@ -1257,6 +1258,39 @@ export class GameEngine {
     const culture = this.state.accumulatedCulture;
     const faith = this.state.accumulatedFaith;
     return { science, culture, faith, total: science + culture + faith };
+  }
+
+  // -------- 胜利目标 --------
+
+  /** 获取当前目标类型对应的资源值 */
+  getGoalCurrentValue(goalType?: VictoryGoalType): number {
+    const type = goalType ?? this.config.victoryGoalType;
+    switch (type) {
+      case 'score': return this.getFinalScore().total;
+      case 'population': return this.state.population;
+      case 'gold': return this.state.storedGold;
+      case 'faith': return this.state.accumulatedFaith;
+      case 'science': return this.state.storedScience;
+      case 'culture': return this.state.accumulatedCulture;
+      default: return 0;
+    }
+  }
+
+  /** 获取当前目标进度 */
+  getGoalProgress(): { type: VictoryGoalType; current: number; target: number; ratio: number; achieved: boolean } {
+    const type = this.config.victoryGoalType;
+    const target = this.config.victoryGoalTarget;
+    const current = this.getGoalCurrentValue(type);
+    const ratio = target > 0 ? Math.min(current / target, 1) : 1;
+    return { type, current, target, ratio, achieved: current >= target };
+  }
+
+  /** 获取目标预设信息 */
+  getGoalPreset(): { name: string; icon: string; description: string } {
+    const preset = VICTORY_GOAL_PRESETS.find(p => p.type === this.config.victoryGoalType);
+    return preset
+      ? { name: preset.name, icon: preset.icon, description: preset.description }
+      : { name: '综合得分', icon: '🏆', description: '' };
   }
 
   // -------- 建造查询 --------

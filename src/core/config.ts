@@ -3,6 +3,8 @@
  * 可配置参数定义、默认值、localStorage 持久化
  */
 
+import type { IVictoryGoalPreset, VictoryGoalType } from './types';
+
 export interface IGameConfig {
   /** 回合数上限 */
   maxTurns: number;
@@ -38,6 +40,10 @@ export interface IGameConfig {
   itemShopFaithCost: number;
   /** 道具商店每次可选数量 */
   itemShopOfferingCount: number;
+  /** 胜利目标类型 */
+  victoryGoalType: VictoryGoalType;
+  /** 胜利目标数值 */
+  victoryGoalTarget: number;
 }
 
 export const DEFAULT_CONFIG: IGameConfig = {
@@ -58,6 +64,8 @@ export const DEFAULT_CONFIG: IGameConfig = {
   itemShopCultureCost: 35,
   itemShopFaithCost: 35,
   itemShopOfferingCount: 3,
+  victoryGoalType: 'score',
+  victoryGoalTarget: 3000,
 };
 
 const STORAGE_KEY = 'civ-roguelike-config';
@@ -103,4 +111,68 @@ export const CONFIG_META: { key: keyof IGameConfig; label: string; min: number; 
   { key: 'itemShopCultureCost', label: '道具商店文化门票', min: 5, max: 80, step: 5 },
   { key: 'itemShopFaithCost', label: '道具商店信仰门票', min: 5, max: 80, step: 5 },
   { key: 'itemShopOfferingCount', label: '道具商店可选数', min: 2, max: 6, step: 1 },
+];
+
+/** 胜利目标预设列表 */
+export const VICTORY_GOAL_PRESETS: IVictoryGoalPreset[] = [
+  {
+    type: 'score',
+    name: '综合得分',
+    icon: '🏆',
+    description: '终局得分（科技+文化+信仰余额）达到目标',
+    defaultTarget: 3000,
+    minTarget: 100,
+    maxTarget: 5000,
+    step: 50,
+  },
+  {
+    type: 'population',
+    name: '人口繁荣',
+    icon: '👥',
+    description: '人口数量达到目标',
+    defaultTarget: 30,
+    minTarget: 5,
+    maxTarget: 60,
+    step: 1,
+  },
+  {
+    type: 'gold',
+    name: '黄金帝国',
+    icon: '💰',
+    description: '终局金币储备达到目标',
+    defaultTarget: 2000,
+    minTarget: 100,
+    maxTarget: 10000,
+    step: 100,
+  },
+  {
+    type: 'faith',
+    name: '信仰之巅',
+    icon: '🙏',
+    description: '终局信仰余额达到目标',
+    defaultTarget: 1000,
+    minTarget: 100,
+    maxTarget: 5000,
+    step: 50,
+  },
+  {
+    type: 'science',
+    name: '科技飞跃',
+    icon: '🔬',
+    description: '终局科技储备达到目标',
+    defaultTarget: 500,
+    minTarget: 50,
+    maxTarget: 3000,
+    step: 50,
+  },
+  {
+    type: 'culture',
+    name: '文化盛世',
+    icon: '🎭',
+    description: '终局文化余额达到目标',
+    defaultTarget: 1000,
+    minTarget: 100,
+    maxTarget: 5000,
+    step: 50,
+  },
 ];

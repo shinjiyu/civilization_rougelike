@@ -5,7 +5,7 @@
  */
 
 import type { IGameConfig } from '../core/config';
-import { CONFIG_META, DEFAULT_CONFIG, loadConfig, resetConfig, saveConfig } from '../core/config';
+import { CONFIG_META, DEFAULT_CONFIG, loadConfig, resetConfig, saveConfig, VICTORY_GOAL_PRESETS } from '../core/config';
 import type { HexCoord, IAdjacencyRule, IShopCard, ItemPool, IYields } from '../core/types';
 import { addYields, emptyYields, yieldColor, yieldIcon, yieldsToString } from '../core/yields';
 import { DISTRICT_REGISTRY } from '../data/districts';
@@ -566,6 +566,87 @@ export class UIManager {
   private fillSettingsForm(config: IGameConfig): void {
     const grid = document.getElementById('settings-grid')!;
     grid.innerHTML = '';
+
+    // ---- 胜利目标区域 ----
+    const goalSection = document.createElement('div');
+    goalSection.className = 'settings-goal-section';
+    goalSection.style.cssText = 'grid-column:1/-1;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:rgba(255,255,255,0.04)';
+
+    const goalTitle = document.createElement('div');
+    goalTitle.style.cssText = 'font-weight:bold;font-size:14px;margin-bottom:8px;color:var(--accent-gold,#f0c040)';
+    goalTitle.textContent = '🎯 胜利目标';
+    goalSection.appendChild(goalTitle);
+
+    const goalRow = document.createElement('div');
+    goalRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:center';
+
+    // 目标类型下拉
+    const goalTypeLabel = document.createElement('label');
+    goalTypeLabel.textContent = '目标类型';
+    goalTypeLabel.setAttribute('for', 'cfg-victoryGoalType');
+    goalRow.appendChild(goalTypeLabel);
+
+    const goalSelect = document.createElement('select');
+    goalSelect.id = 'cfg-victoryGoalType';
+    goalSelect.style.cssText = 'padding:6px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.2);background:var(--bg-secondary,#2a2a2a);color:var(--text-primary,#eee);font-size:13px';
+    for (const preset of VICTORY_GOAL_PRESETS) {
+      const opt = document.createElement('option');
+      opt.value = preset.type;
+      opt.textContent = `${preset.icon} ${preset.name}`;
+      if (preset.type === config.victoryGoalType) opt.selected = true;
+      goalSelect.appendChild(opt);
+    }
+    goalRow.appendChild(goalSelect);
+
+    // 目标数值
+    const goalTargetLabel = document.createElement('label');
+    goalTargetLabel.textContent = '目标数值';
+    goalTargetLabel.setAttribute('for', 'cfg-victoryGoalTarget');
+    goalRow.appendChild(goalTargetLabel);
+
+    const goalTargetInput = document.createElement('input');
+    goalTargetInput.type = 'number';
+    goalTargetInput.id = 'cfg-victoryGoalTarget';
+    goalTargetInput.value = String(config.victoryGoalTarget);
+
+    // 根据当前选中的目标类型设置 min/max/step
+    const updateTargetConstraints = () => {
+      const selectedType = goalSelect.value;
+      const preset = VICTORY_GOAL_PRESETS.find(p => p.type === selectedType);
+      if (preset) {
+        goalTargetInput.min = String(preset.minTarget);
+        goalTargetInput.max = String(preset.maxTarget);
+        goalTargetInput.step = String(preset.step);
+        // 目标描述
+        const desc = goalSection.querySelector('.goal-desc');
+        if (desc) desc.textContent = preset.description;
+      }
+    };
+
+    goalSelect.addEventListener('change', () => {
+      const selectedType = goalSelect.value;
+      const preset = VICTORY_GOAL_PRESETS.find(p => p.type === selectedType);
+      if (preset) {
+        goalTargetInput.value = String(preset.defaultTarget);
+      }
+      updateTargetConstraints();
+    });
+
+    goalRow.appendChild(goalTargetInput);
+    goalSection.appendChild(goalRow);
+
+    // 目标描述
+    const goalDesc = document.createElement('div');
+    goalDesc.className = 'goal-desc';
+    goalDesc.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-top:6px;font-style:italic';
+    const currentPreset = VICTORY_GOAL_PRESETS.find(p => p.type === config.victoryGoalType);
+    goalDesc.textContent = currentPreset?.description ?? '';
+    goalSection.appendChild(goalDesc);
+
+    grid.appendChild(goalSection);
+    updateTargetConstraints();
+
+    // ---- 常规配置项 ----
     for (const meta of CONFIG_META) {
       const label = document.createElement('label');
       label.textContent = meta.label;
@@ -595,6 +676,17 @@ export class UIManager {
         (config as any)[meta.key] = meta.step < 1 ? val : Math.round(val);
       }
     }
+
+    // 保存胜利目标设置
+    const goalTypeSelect = document.getElementById('cfg-victoryGoalType') as HTMLSelectElement;
+    const goalTargetInput = document.getElementById('cfg-victoryGoalTarget') as HTMLInputElement;
+    if (goalTypeSelect) {
+      config.victoryGoalType = goalTypeSelect.value as any;
+    }
+    if (goalTargetInput) {
+      config.victoryGoalTarget = Math.max(1, Math.round(parseFloat(goalTargetInput.value) || 0));
+    }
+
     saveConfig(config);
     document.getElementById('settings-overlay')!.classList.remove('visible');
     this.showToast('设置已保存，下局新游戏生效');
@@ -747,7 +839,23 @@ export class UIManager {
     `;
 
     const score = this.engine.getFinalScore();
-    this.hudScore.innerHTML = `得分 <span class="score-value">${score.total}</span>`;
+    const goal = this.engine.getGoalProgress();
+    const goalPreset = this.engine.getGoalPreset();
+    const goalPct = Math.floor(goal.ratio * 100);
+    const goalColor = goal.achieved ? 'var(--accent-green)' : (goalPct >= 60 ? 'var(--accent-gold, #f0c040)' : 'var(--text-secondary)');
+    this.hudScore.innerHTML = `
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span>得分 <span class="score-value">${score.total}</span></span>
+        <span style="color:${goalColor};font-size:12px;white-space:nowrap"
+          title="${goalPreset.description}">
+          ${goalPreset.icon} ${goal.current}/${goal.target}
+          ${goal.achieved ? '✅' : `(${goalPct}%)`}
+        </span>
+      </div>
+      <div class="goal-progress-bar" style="margin-top:2px">
+        <div class="goal-progress-fill" style="width:${goalPct}%;background:${goalColor}"></div>
+      </div>
+    `;
 
     const rerollBtn = document.getElementById('btn-reroll') as HTMLButtonElement;
     if (rerollBtn) {
@@ -1210,9 +1318,28 @@ export class UIManager {
   private showGameOver(): void {
     const score = this.engine.getFinalScore();
     const state = this.engine.getState();
+    const goal = this.engine.getGoalProgress();
+    const goalPreset = this.engine.getGoalPreset();
+    const isVictory = goal.achieved;
 
     this.gameOverContent.innerHTML = `
-      <h2>游戏结束</h2>
+      <h2 style="color:${isVictory ? 'var(--accent-green)' : 'var(--accent-red, #e05050)'}">
+        ${isVictory ? '🎉 胜利！' : '😔 未达成目标'}
+      </h2>
+      <div class="victory-goal-summary" style="
+        text-align:center;padding:8px 12px;margin-bottom:12px;
+        border-radius:8px;
+        background:${isVictory ? 'rgba(80,200,80,0.12)' : 'rgba(200,80,80,0.12)'};
+        border:1px solid ${isVictory ? 'rgba(80,200,80,0.3)' : 'rgba(200,80,80,0.3)'};
+      ">
+        <div style="font-size:14px;margin-bottom:4px">
+          ${goalPreset.icon} <strong>${goalPreset.name}</strong>
+        </div>
+        <div style="font-size:20px;font-weight:bold;color:${isVictory ? 'var(--accent-green)' : 'var(--accent-red, #e05050)'}">
+          ${goal.current} / ${goal.target}
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${goalPreset.description}</div>
+      </div>
       <div class="score-breakdown">
         <div class="score-row"><span>👥 最终人口</span><span>${state.population}</span></div>
         <div class="score-row"><span>🏪 商店等级</span><span>Lv.${state.shopLevel}</span></div>

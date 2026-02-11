@@ -105,6 +105,19 @@ body {
   color: var(--accent-gold);
 }
 
+.goal-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.goal-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
 /* ============ 主体区域 ============ */
 
 #main {
@@ -1415,16 +1428,27 @@ body {
 /* ============ 手机竖屏强制横屏 ============ */
 
 @media (max-width: 768px) and (orientation: portrait) {
-  /* 将整个 app 旋转 90° 以实现强制横屏 */
+  /*
+   * 将整个 app 旋转 90° 以实现强制横屏
+   * 使用 svh (small viewport height) 确保不被浏览器地址栏/底栏遮挡
+   * svh = 扣除所有浏览器 UI 后的最小可见高度
+   * 加 vh 作为不支持 svh 的浏览器回退
+   */
   #app {
     position: fixed;
     width: 100vh;
+    width: 100svh;
     height: 100vw;
     top: calc(50vh - 50vw);
+    top: calc(50svh - 50vw);
     left: calc(50vw - 50vh);
+    left: calc(50vw - 50svh);
     transform: rotate(90deg);
     transform-origin: center center;
     overflow: hidden;
+    /* 额外安全区域内边距，防止刘海/圆角裁切 */
+    padding: env(safe-area-inset-left, 0px) env(safe-area-inset-bottom, 0px)
+      env(safe-area-inset-right, 0px) env(safe-area-inset-top, 0px);
   }
 
   /* 恢复为横向布局 (覆盖 768px 的纵向布局) */

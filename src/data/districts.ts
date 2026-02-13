@@ -36,6 +36,7 @@ export const CAMPUS: IDistrict = {
   productionCost: 15,
   maxLevel: 99,
   upgradePrimaryYield: 'science',
+  shopPool: 'culture',
 };
 
 export const COMMERCIAL_HUB: IDistrict = {
@@ -62,6 +63,7 @@ export const COMMERCIAL_HUB: IDistrict = {
   productionCost: 15,
   maxLevel: 99,
   upgradePrimaryYield: 'gold',
+  shopPool: 'gold',
 };
 
 export const HOLY_SITE: IDistrict = {
@@ -108,6 +110,7 @@ export const THEATER_SQUARE: IDistrict = {
   productionCost: 15,
   maxLevel: 99,
   upgradePrimaryYield: 'culture',
+  shopPool: 'faith',
 };
 
 export const INDUSTRIAL_ZONE: IDistrict = {

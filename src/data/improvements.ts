@@ -67,6 +67,7 @@ export const TRADING_POST: IImprovement = {
   icon: '🏪',
   productionCost: 8,
   terrainHint: '任何可建造地形',
+  shopPool: 'gold',
 };
 
 export const LUMBER_MILL: IImprovement = {
@@ -81,6 +82,7 @@ export const LUMBER_MILL: IImprovement = {
   icon: '🪓',
   productionCost: 8,
   terrainHint: '需要森林地貌',
+  shopPool: 'culture',
 };
 
 export const PLANTATION: IImprovement = {
@@ -146,6 +148,7 @@ export const HUNTING_GROUND: IImprovement = {
   icon: '🏹',
   productionCost: 8,
   terrainHint: '需要寒冷地形（冻土）',
+  shopPool: 'faith',
 };
 
 /** 所有改良设施 registry */

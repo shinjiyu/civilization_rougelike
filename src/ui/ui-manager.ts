@@ -296,7 +296,7 @@ export class UIManager {
   private openItemShop(pool: ItemPool): void {
     const offerings = this.engine.enterItemShop(pool);
     if (!offerings) {
-      this.showToast('资源不足');
+      this.showToast('入场券不足');
       return;
     }
 
@@ -407,25 +407,40 @@ export class UIManager {
   private updateItemShopPanel(): void {
     const state = this.engine.getState();
     const entries = document.getElementById('item-shop-entries')!;
-    const config = this.engine.getConfig();
 
-    const pools: { pool: ItemPool; icon: string; name: string; cost: number; currency: string }[] = [
-      { pool: 'gold', icon: '🪙', name: '金币池', cost: config.itemShopGoldCost, currency: '🪙' },
-      { pool: 'culture', icon: '🎭', name: '文化池', cost: config.itemShopCultureCost, currency: '🎭' },
-      { pool: 'faith', icon: '🙏', name: '信仰池', cost: config.itemShopFaithCost, currency: '🙏' },
+    const pools: { pool: ItemPool; icon: string; name: string; source: string }[] = [
+      { pool: 'gold', icon: '🪙', name: '金币池', source: '商业中心/商站' },
+      { pool: 'culture', icon: '🎭', name: '文化池', source: '学院/伐木场' },
+      { pool: 'faith', icon: '🙏', name: '信仰池', source: '剧院广场/猎场' },
     ];
 
     entries.innerHTML = '';
     for (const p of pools) {
       const canEnter = this.engine.canEnterItemShop(p.pool);
       const hasFree = state.freeItemShopEntries.includes(p.pool);
+      const max = this.engine.getItemShopMaxEntries(p.pool);
+      const remaining = this.engine.getItemShopRemainingEntries(p.pool);
+      const freeCount = state.freeItemShopEntries.filter(x => x === p.pool).length;
+
       const btn = document.createElement('button');
       btn.className = `item-shop-entry-btn${hasFree ? ' has-free' : ''}`;
       btn.dataset.pool = p.pool;
       if (!canEnter || state.phase === 'game_over') btn.setAttribute('disabled', '');
+
+      let costLabel: string;
+      if (hasFree) {
+        costLabel = '🎫 免费券';
+      } else if (remaining > 0) {
+        costLabel = `🎟️ ${remaining}/${max}`;
+      } else {
+        costLabel = `<span style="font-size:10px">需${p.source}</span>`;
+      }
+      // 免费券额外显示
+      const freeExtra = freeCount > 0 ? ` <span style="color:var(--accent-green);font-size:10px">+${freeCount}🎫</span>` : '';
+
       btn.innerHTML = `
         <span class="entry-pool">${p.icon} ${p.name}</span>
-        <span class="entry-cost">${hasFree ? '🎫 免费券' : `${p.cost}${p.currency}`}</span>
+        <span class="entry-cost">${costLabel}${freeExtra}</span>
       `;
       entries.appendChild(btn);
     }
@@ -505,19 +520,19 @@ export class UIManager {
         <li>每回合开始自动结算产出、人口增减</li>
         <li>商店刷新地块卡牌（锁定的卡保留）</li>
         <li>自动检查尤里卡时刻触发</li>
-        <li>可随时建造改良/区域、进入道具商店</li>
+        <li>可随时建造改良/区域、使用入场券进入道具商店</li>
         <li>点击「结束回合」进入下一回合</li>
       </ul>
 
       <h3>💰 六种产出</h3>
       <table class="rules-table">
         <tr><th>产出</th><th>用途</th><th>计分</th></tr>
-        <tr><td>🪙 金币</td><td>购买地块、刷新商店、解锁格子、道具门票</td><td>❌</td></tr>
+        <tr><td>🪙 金币</td><td>购买地块、刷新商店、解锁格子</td><td>❌</td></tr>
         <tr><td>🌾 食物</td><td>人口增长（净食物累积达阈值→+1人口）</td><td>❌</td></tr>
         <tr><td>⚙️ 生产力</td><td>建造改良/区域/升级</td><td>❌</td></tr>
         <tr><td>🔬 科技</td><td>升级商店等级（花费），剩余计入得分</td><td>✅</td></tr>
-        <tr><td>🎭 文化</td><td>道具商店门票 + 累积得分</td><td>✅</td></tr>
-        <tr><td>🙏 信仰</td><td>道具商店门票 + 累积得分</td><td>✅</td></tr>
+        <tr><td>🎭 文化</td><td>累积得分</td><td>✅</td></tr>
+        <tr><td>🙏 信仰</td><td>累积得分</td><td>✅</td></tr>
       </table>
 
       <h3>🗺️ 地图系统</h3>
@@ -565,17 +580,18 @@ export class UIManager {
         ${adjRows.join('')}
       </table>
 
-      <h3>🎁 道具系统</h3>
+      <h3>🎁 道具系统（建筑入场券）</h3>
       <ul>
-        <li>支付门票（🪙/🎭/🙏）进入对应池的道具商店</li>
+        <li>道具商店<b>不再消耗资源</b>进入，而是需要<b>建筑入场券</b></li>
+        <li>区域提供入场券（每级+1）：商业中心→🪙池、学院→🎭池、剧院广场→🙏池</li>
+        <li>改良Lv2+提供入场券（+1）：商站→🪙池、伐木场→🎭池、猎场→🙏池</li>
         <li>每次从池中随机展示${this.engine.getConfig().itemShopOfferingCount}个道具，选择1个获得</li>
         <li>道具提供持续加成（每回合加成/百分比提升等）</li>
-        <li>持有数量无上限，随时可进入商店</li>
         <li>部分道具有即时效果（如立即获得资源、+1人口）</li>
       </ul>
 
       <h3>⚡ 尤里卡时刻</h3>
-      <p>达到特定里程碑可获得免费道具商店入场券：</p>
+      <p>达到特定里程碑可获得<b>额外免费</b>道具商店入场券（不占建筑配额）：</p>
       <table class="rules-table">
         <tr><th>条件</th><th>奖励</th></tr>
         ${EUREKA_DEFS.map(e => `<tr><td>${e.description}</td><td>免费${e.pool === 'gold' ? '🪙' : e.pool === 'culture' ? '🎭' : '🙏'}商店</td></tr>`).join('')}

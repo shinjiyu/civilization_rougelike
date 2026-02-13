@@ -163,6 +163,7 @@ export class GameEngine {
       itemIds,
       eurekaTriggered: s.eurekaTriggered,
       freeItemShopEntries: s.freeItemShopEntries,
+      itemShopUsed: s.itemShopUsed,
       config: this.config,
     });
   }
@@ -249,6 +250,7 @@ export class GameEngine {
         items,
         eurekaTriggered: data.eurekaTriggered || [],
         freeItemShopEntries: data.freeItemShopEntries || [],
+        itemShopUsed: data.itemShopUsed || { gold: 0, culture: 0, faith: 0 },
       };
 
       this.refreshYieldSnapshot();
@@ -446,6 +448,7 @@ export class GameEngine {
       items: [],
       eurekaTriggered: [],
       freeItemShopEntries: [],
+      itemShopUsed: { gold: 0, culture: 0, faith: 0 },
     };
   }
 
@@ -1058,65 +1061,49 @@ export class GameEngine {
     return config ? config.upgradeCost : null;
   }
 
-  // -------- 道具系统 --------
+  // -------- 道具系统（建筑入场券机制） --------
 
-  /** 获取进入道具商店的费用 */
-  getItemShopCost(pool: ItemPool): number {
-    switch (pool) {
-      case 'gold': return this.config.itemShopGoldCost;
-      case 'culture': return this.config.itemShopCultureCost;
-      case 'faith': return this.config.itemShopFaithCost;
+  /**
+   * 计算指定池的最大入场券数（来自建筑）。
+   * - 区域：每级 +1（Lv1=+1, Lv2=+2, ...）
+   * - 改良：Lv2+ 时 +1（不随级别增长）
+   */
+  getItemShopMaxEntries(pool: ItemPool): number {
+    let total = 0;
+    for (const tile of this.state.board.values()) {
+      // 区域：shopPool 匹配时，加上区域等级
+      if (tile.district && tile.district.shopPool === pool) {
+        total += tile.districtLevel;
+      }
+      // 改良：shopPool 匹配且 Lv2+ 时 +1
+      if (tile.improvement && tile.improvement.shopPool === pool && tile.improvementLevel >= 2) {
+        total += 1;
+      }
     }
+    return total;
   }
 
-  /** 获取用于支付门票的资源名 */
-  getItemShopCurrency(pool: ItemPool): string {
-    switch (pool) {
-      case 'gold': return '🪙';
-      case 'culture': return '🎭';
-      case 'faith': return '🙏';
-    }
+  /** 获取指定池的剩余入场次数（建筑配额 - 已使用） */
+  getItemShopRemainingEntries(pool: ItemPool): number {
+    return Math.max(0, this.getItemShopMaxEntries(pool) - this.state.itemShopUsed[pool]);
   }
 
-  /** 能否进入指定道具商店 (付费或免费) */
+  /** 能否进入指定道具商店（有免费券 或 有剩余建筑配额） */
   canEnterItemShop(pool: ItemPool): boolean {
-    // 有免费券
     if (this.state.freeItemShopEntries.includes(pool)) return true;
-    // 有足够资源
-    return this.getAvailableCurrency(pool) >= this.getItemShopCost(pool);
+    return this.getItemShopRemainingEntries(pool) > 0;
   }
 
-  /** 获取指定类型的可用资源 */
-  private getAvailableCurrency(pool: ItemPool): number {
-    switch (pool) {
-      case 'gold': return this.state.storedGold;
-      case 'culture': return this.state.accumulatedCulture;
-      case 'faith': return this.state.accumulatedFaith;
-    }
-  }
-
-  /** 支付门票并生成道具选项 */
+  /** 消耗入场券并生成道具选项 */
   enterItemShop(pool: ItemPool): IItemDef[] | null {
-    // 检查免费券
+    // 优先消耗免费券
     const freeIdx = this.state.freeItemShopEntries.indexOf(pool);
     if (freeIdx >= 0) {
       this.state.freeItemShopEntries.splice(freeIdx, 1);
     } else {
-      const cost = this.getItemShopCost(pool);
-      switch (pool) {
-        case 'gold':
-          if (this.state.storedGold < cost) return null;
-          this.state.storedGold -= cost;
-          break;
-        case 'culture':
-          if (this.state.accumulatedCulture < cost) return null;
-          this.state.accumulatedCulture -= cost;
-          break;
-        case 'faith':
-          if (this.state.accumulatedFaith < cost) return null;
-          this.state.accumulatedFaith -= cost;
-          break;
-      }
+      // 消耗建筑配额
+      if (this.getItemShopRemainingEntries(pool) <= 0) return null;
+      this.state.itemShopUsed[pool]++;
     }
 
     // 从池中随机抽取

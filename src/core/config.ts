@@ -32,12 +32,6 @@ export interface IGameConfig {
   hexUnlockCostRing3: number;
   /** Ring 4 金币解锁费用 */
   hexUnlockCostRing4: number;
-  /** 道具商店金币门票 */
-  itemShopGoldCost: number;
-  /** 道具商店文化门票 */
-  itemShopCultureCost: number;
-  /** 道具商店信仰门票 */
-  itemShopFaithCost: number;
   /** 道具商店每次可选数量 */
   itemShopOfferingCount: number;
   /** 胜利目标类型 */
@@ -60,9 +54,6 @@ export const DEFAULT_CONFIG: IGameConfig = {
   hexUnlockCostRing2: 5,
   hexUnlockCostRing3: 10,
   hexUnlockCostRing4: 20,
-  itemShopGoldCost: 40,
-  itemShopCultureCost: 35,
-  itemShopFaithCost: 35,
   itemShopOfferingCount: 3,
   victoryGoalType: 'score',
   victoryGoalTarget: 3000,
@@ -164,9 +155,6 @@ export const CONFIG_META: { key: keyof IGameConfig; label: string; min: number; 
   { key: 'hexUnlockCostRing2', label: '2环解锁费用', min: 1, max: 20, step: 1 },
   { key: 'hexUnlockCostRing3', label: '3环解锁费用', min: 1, max: 30, step: 1 },
   { key: 'hexUnlockCostRing4', label: '4环解锁费用', min: 1, max: 50, step: 1 },
-  { key: 'itemShopGoldCost', label: '道具商店金币门票', min: 5, max: 80, step: 5 },
-  { key: 'itemShopCultureCost', label: '道具商店文化门票', min: 5, max: 80, step: 5 },
-  { key: 'itemShopFaithCost', label: '道具商店信仰门票', min: 5, max: 80, step: 5 },
   { key: 'itemShopOfferingCount', label: '道具商店可选数', min: 2, max: 6, step: 1 },
 ];
 

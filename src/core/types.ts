@@ -92,6 +92,8 @@ export interface IImprovement {
   productionCost: number;
   /** 适用地形说明（UI展示用） */
   terrainHint?: string;
+  /** Lv2+ 时为指定道具池提供入场券 */
+  shopPool?: ItemPool;
 }
 
 // ============ 区域 ============
@@ -110,6 +112,8 @@ export interface IDistrict {
   maxLevel: number;
   /** 每级额外加成的主要yield key */
   upgradePrimaryYield: keyof IYields;
+  /** 每级为指定道具池提供 +1 入场券 */
+  shopPool?: ItemPool;
 }
 
 // ============ 地块（棋盘格子） ============
@@ -248,6 +252,8 @@ export interface IGameState {
   eurekaTriggered: string[];
   /** 可用的免费道具商店入场券 [pool名称] */
   freeItemShopEntries: ItemPool[];
+  /** 各池已使用的道具商店入场次数 */
+  itemShopUsed: Record<ItemPool, number>;
 }
 
 // ============ 卡牌模板（用于卡池定义，仅地块） ============

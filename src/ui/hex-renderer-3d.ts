@@ -97,7 +97,9 @@ export class HexRenderer3D {
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x0f1923);
+    // 初始清除色从 CSS 变量读取
+    const initBg = getComputedStyle(document.documentElement).getPropertyValue('--scene-bg').trim() || '#0f1923';
+    this.renderer.setClearColor(new THREE.Color(initBg));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -112,7 +114,8 @@ export class HexRenderer3D {
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x0f1923, 0.006);
+    const fogColor = new THREE.Color(initBg);
+    this.scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.006);
     this.scene.add(this.boardGroup);
     this.scene.add(this.highlightGroup);
 
@@ -1037,6 +1040,17 @@ export class HexRenderer3D {
   /** 当前收益标签是否显示 */
   getYieldLabelsVisible(): boolean {
     return this.yieldLabelsVisible;
+  }
+
+  /** 主题切换后更新 3D 场景颜色 */
+  applyThemeColors(): void {
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--scene-bg').trim() || '#0f1923';
+    const color = new THREE.Color(bg);
+    this.renderer.setClearColor(color);
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.copy(color);
+    }
+    this.draw();
   }
 
   /** 更新所有缩放动画 */

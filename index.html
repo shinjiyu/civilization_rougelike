@@ -10,10 +10,20 @@
     <style>
       /* 防止加载闪烁 */
       body {
-        background: #0f1923;
+        background: #f5f0e0;
         margin: 0;
       }
     </style>
+    <script>
+      /* 在 CSS 加载前立即应用保存的主题，避免白色闪烁 */
+      (function () {
+        var t = localStorage.getItem("civ-theme") || "light";
+        document.documentElement.setAttribute("data-theme", t);
+        if (t === "dark")
+          document.querySelector("style").textContent =
+            "body{background:#0f1923;margin:0}";
+      })();
+    </script>
   </head>
   <body>
     <div id="app">

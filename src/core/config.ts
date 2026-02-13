@@ -92,6 +92,63 @@ export function resetConfig(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
 
+// ============ 挑战分享 ============
+
+export interface IChallengeData {
+  /** 发起者名称 */
+  from: string;
+  /** 发起者的实际得分 (作为挑战目标) */
+  score: number;
+  /** 胜利目标类型 */
+  goalType: VictoryGoalType;
+  /** 游戏配置 (只存与默认值不同的字段, 缩短 URL) */
+  config: Partial<IGameConfig>;
+}
+
+/** 将挑战数据编码为 URL 安全字符串 */
+export function encodeChallengeData(data: IChallengeData): string {
+  const diff: Record<string, unknown> = {};
+  for (const key of Object.keys(data.config) as (keyof IGameConfig)[]) {
+    if (data.config[key] !== DEFAULT_CONFIG[key]) {
+      diff[key] = data.config[key];
+    }
+  }
+  const compact = { f: data.from, s: data.score, g: data.goalType, c: diff };
+  const json = JSON.stringify(compact);
+  return btoa(unescape(encodeURIComponent(json)));
+}
+
+/** 从 URL 字符串解码挑战数据, 失败返回 null */
+export function decodeChallengeData(encoded: string): IChallengeData | null {
+  try {
+    const json = decodeURIComponent(escape(atob(encoded)));
+    const compact = JSON.parse(json);
+    return {
+      from: compact.f || '???',
+      score: compact.s || 0,
+      goalType: compact.g || 'score',
+      config: compact.c || {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 从当前页面 URL 提取挑战数据 */
+export function getChallengeFromURL(): IChallengeData | null {
+  const params = new URLSearchParams(window.location.search);
+  const encoded = params.get('challenge');
+  if (!encoded) return null;
+  return decodeChallengeData(encoded);
+}
+
+/** 生成挑战分享链接 */
+export function buildChallengeURL(data: IChallengeData): string {
+  const encoded = encodeChallengeData(data);
+  const base = window.location.origin + window.location.pathname;
+  return `${base}?challenge=${encoded}`;
+}
+
 /** 配置项元数据（UI 渲染用） */
 export const CONFIG_META: { key: keyof IGameConfig; label: string; min: number; max: number; step: number }[] = [
   { key: 'maxTurns', label: '回合数上限', min: 5, max: 100, step: 1 },

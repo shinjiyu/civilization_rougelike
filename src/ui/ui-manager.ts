@@ -4,8 +4,8 @@
  * 与 Canvas 渲染器协作
  */
 
-import type { IGameConfig } from '../core/config';
-import { CONFIG_META, DEFAULT_CONFIG, loadConfig, resetConfig, saveConfig, VICTORY_GOAL_PRESETS } from '../core/config';
+import type { IChallengeData, IGameConfig } from '../core/config';
+import { buildChallengeURL, CONFIG_META, DEFAULT_CONFIG, loadConfig, resetConfig, saveConfig, VICTORY_GOAL_PRESETS } from '../core/config';
 import type { HexCoord, IAdjacencyRule, IShopCard, ItemPool, IYields } from '../core/types';
 import { addYields, emptyYields, yieldColor, yieldIcon, yieldsToString } from '../core/yields';
 import { DISTRICT_REGISTRY } from '../data/districts';
@@ -23,6 +23,7 @@ interface IHexRenderer {
   draw(): void;
   toggleYieldLabels(): void;
   getYieldLabelsVisible(): boolean;
+  applyThemeColors(): void;
 }
 
 export class UIManager {
@@ -48,6 +49,9 @@ export class UIManager {
     coord: HexCoord;
     description: string;
   } | null = null;
+
+  /** 挑战发起者昵称（挑战模式才有值） */
+  private challengeFrom: string | null = null;
 
   /** 是否为移动端布局 */
   private isMobile = false;
@@ -75,6 +79,13 @@ export class UIManager {
     this.bindItemShopActions();
     this.bindPanelToggles();
     this.createYieldToggleButton();
+    this.applyStoredTheme();
+    this.createThemeToggleButton();
+  }
+
+  /** 设置挑战发起者名称（由 main.ts 在挑战模式下调用） */
+  setChallengeFrom(name: string): void {
+    this.challengeFrom = name;
   }
 
   private cacheElements(): void {
@@ -362,6 +373,33 @@ export class UIManager {
       const visible = this.renderer.getYieldLabelsVisible();
       btn.classList.toggle('off', !visible);
       btn.title = visible ? '隐藏收益标签' : '显示收益标签';
+    });
+    container.appendChild(btn);
+  }
+
+  // -------- 主题切换 --------
+
+  private applyStoredTheme(): void {
+    const stored = localStorage.getItem('civ-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', stored);
+  }
+
+  private createThemeToggleButton(): void {
+    const container = document.getElementById('board-container')!;
+    const btn = document.createElement('button');
+    btn.id = 'btn-toggle-theme';
+    btn.className = 'yield-toggle-btn theme-toggle-btn';
+    btn.title = '切换深色/浅色主题';
+    const isDark = (localStorage.getItem('civ-theme') || 'light') === 'dark';
+    btn.textContent = isDark ? '☀️' : '🌙';
+    btn.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('civ-theme', next);
+      btn.textContent = next === 'dark' ? '☀️' : '🌙';
+      btn.title = next === 'dark' ? '切换浅色主题' : '切换深色主题';
+      this.renderer.applyThemeColors();
     });
     container.appendChild(btn);
   }
@@ -843,7 +881,12 @@ export class UIManager {
     const goalPreset = this.engine.getGoalPreset();
     const goalPct = Math.floor(goal.ratio * 100);
     const goalColor = goal.achieved ? 'var(--accent-green)' : (goalPct >= 60 ? 'var(--accent-gold, #f0c040)' : 'var(--text-secondary)');
+    const challengeBanner = this.challengeFrom
+      ? `<div style="font-size:11px;color:var(--accent-orange);font-weight:bold;white-space:nowrap">⚔️ 挑战 ${this.challengeFrom}</div>`
+      : '';
+
     this.hudScore.innerHTML = `
+      ${challengeBanner}
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <span>得分 <span class="score-value">${score.total}</span></span>
         <span style="color:${goalColor};font-size:12px;white-space:nowrap"
@@ -1322,7 +1365,14 @@ export class UIManager {
     const goalPreset = this.engine.getGoalPreset();
     const isVictory = goal.achieved;
 
+    const challengeHeader = this.challengeFrom
+      ? `<div style="font-size:14px;color:var(--accent-orange);margin-bottom:8px">
+          ⚔️ 挑战自 <strong>${this.challengeFrom}</strong>
+        </div>`
+      : '';
+
     this.gameOverContent.innerHTML = `
+      ${challengeHeader}
       <h2 style="color:${isVictory ? 'var(--accent-green)' : 'var(--accent-red, #e05050)'}">
         ${isVictory ? '🎉 胜利！' : '😔 未达成目标'}
       </h2>
@@ -1349,16 +1399,102 @@ export class UIManager {
         <div class="score-row"><span>🙏 信仰</span><span>${score.faith}</span></div>
         <div class="score-row total"><span>总得分</span><span>${score.total}</span></div>
       </div>
-      <button class="action-btn primary" id="btn-restart" style="font-size:16px;padding:10px 32px;">再来一局</button>
+      <div class="challenge-share-section" style="
+        margin-top:16px;padding:12px;border-radius:10px;
+        background:var(--bg-card);border:1px solid var(--border-color);
+        text-align:left;
+      ">
+        <div style="font-size:14px;font-weight:bold;color:var(--accent-gold);margin-bottom:8px;text-align:center">
+          🎯 发起挑战
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;text-align:center">
+          以你的 ${goalPreset.name} <strong>${goal.current}</strong> 为目标，邀请好友来挑战！
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="challenge-username" placeholder="输入你的昵称"
+            maxlength="16"
+            style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-color);
+              background:var(--bg-tertiary);color:var(--text-primary);font-size:13px;font-family:inherit;
+              min-width:0"
+          />
+          <button class="action-btn primary" id="btn-gen-challenge"
+            style="white-space:nowrap;font-size:13px;padding:6px 14px">
+            生成链接
+          </button>
+        </div>
+        <div id="challenge-link-result" style="display:none;margin-top:8px">
+          <input type="text" id="challenge-link-url" readonly
+            style="width:100%;padding:6px 10px;border-radius:6px;border:1px solid var(--accent-gold);
+              background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;font-family:inherit"
+          />
+          <button class="action-btn" id="btn-copy-challenge"
+            style="width:100%;margin-top:6px;font-size:12px;padding:5px 0">
+            📋 复制链接
+          </button>
+        </div>
+      </div>
+      <button class="action-btn primary" id="btn-restart" style="font-size:16px;padding:10px 32px;margin-top:12px">再来一局</button>
     `;
+
+    // 生成挑战链接
+    document.getElementById('btn-gen-challenge')?.addEventListener('click', () => {
+      const nameInput = document.getElementById('challenge-username') as HTMLInputElement;
+      const username = nameInput.value.trim();
+      if (!username) {
+        nameInput.style.borderColor = 'var(--accent-red)';
+        nameInput.focus();
+        return;
+      }
+      nameInput.style.borderColor = '';
+
+      const config = this.engine.getConfig();
+      const challengeData: IChallengeData = {
+        from: username,
+        score: goal.current,
+        goalType: goal.type,
+        config: { ...config },
+      };
+      const url = buildChallengeURL(challengeData);
+
+      const resultDiv = document.getElementById('challenge-link-result')!;
+      const urlInput = document.getElementById('challenge-link-url') as HTMLInputElement;
+      urlInput.value = url;
+      resultDiv.style.display = 'block';
+
+      // 保存昵称方便下次使用
+      localStorage.setItem('civ-username', username);
+    });
+
+    // 复制链接
+    document.getElementById('btn-copy-challenge')?.addEventListener('click', () => {
+      const urlInput = document.getElementById('challenge-link-url') as HTMLInputElement;
+      urlInput.select();
+      navigator.clipboard.writeText(urlInput.value).then(() => {
+        this.showToast('挑战链接已复制！');
+      }).catch(() => {
+        document.execCommand('copy');
+        this.showToast('挑战链接已复制！');
+      });
+    });
+
+    // 回填上次使用的昵称
+    const savedName = localStorage.getItem('civ-username');
+    if (savedName) {
+      (document.getElementById('challenge-username') as HTMLInputElement).value = savedName;
+    }
 
     document.getElementById('btn-restart')?.addEventListener('click', () => {
       this.selectedTileCoord = null;
       this.pendingConfirm = null;
       this.renderer.setSelectedHex(null);
       GameEngine.clearSave();
-      const config = loadConfig();
-      this.engine.startNewGame(config);
+      // 挑战模式下重开仍用挑战配置，普通模式用用户配置
+      if (this.challengeFrom) {
+        this.engine.startNewGame();
+      } else {
+        const config = loadConfig();
+        this.engine.startNewGame(config);
+      }
       this.gameOverOverlay.classList.remove('visible');
     });
 

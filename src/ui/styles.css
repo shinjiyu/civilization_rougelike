@@ -6,7 +6,37 @@
   box-sizing: border-box;
 }
 
-:root {
+/* 浅色主题 (默认) */
+:root,
+[data-theme="light"] {
+  --bg-primary: #f5f0e0;
+  --bg-secondary: #ebe5d0;
+  --bg-tertiary: #ddd6be;
+  --bg-card: #e8e0c8;
+  --bg-card-hover: #dfd6b8;
+  --border-color: #c5b898;
+  --text-primary: #3a3020;
+  --text-secondary: #6a5d45;
+  --text-muted: #998a6a;
+  --accent-gold: #c09020;
+  --accent-green: #3a8a28;
+  --accent-blue: #2878b8;
+  --accent-purple: #8838a0;
+  --accent-orange: #c05a10;
+  --accent-red: #c03030;
+  --overlay-bg: rgba(60, 50, 30, 0.7);
+  --shadow-color: rgba(0, 0, 0, 0.15);
+  --progress-track: rgba(0, 0, 0, 0.1);
+  --lock-btn-bg: rgba(255, 255, 255, 0.6);
+  /* 3D 场景颜色 */
+  --scene-bg: #f0ead0;
+  --scene-hex-adj: #d8d0b0;
+  --scene-hex-empty: #c8c0a0;
+  --scene-hex-default: #d0c8a8;
+}
+
+/* 深色主题 */
+[data-theme="dark"] {
   --bg-primary: #0f1923;
   --bg-secondary: #1a2634;
   --bg-tertiary: #243447;
@@ -22,6 +52,15 @@
   --accent-purple: #c060d0;
   --accent-orange: #e07020;
   --accent-red: #e04040;
+  --overlay-bg: rgba(0, 0, 0, 0.75);
+  --shadow-color: rgba(0, 0, 0, 0.5);
+  --progress-track: rgba(255, 255, 255, 0.1);
+  --lock-btn-bg: rgba(0, 0, 0, 0.5);
+  /* 3D 场景颜色 */
+  --scene-bg: #0f1923;
+  --scene-hex-adj: #1e3348;
+  --scene-hex-empty: #151e2a;
+  --scene-hex-default: #1e3045;
 }
 
 body {
@@ -496,7 +535,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--overlay-bg);
   z-index: 100;
   align-items: center;
   justify-content: center;
@@ -706,7 +745,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--overlay-bg);
   z-index: 100;
   align-items: center;
   justify-content: center;
@@ -1113,6 +1152,11 @@ body {
   opacity: 0.7;
 }
 
+.theme-toggle-btn {
+  bottom: 12px;
+  left: 54px; /* 在收益按钮右侧 */
+}
+
 /* ============ 商店卡牌锁定 ============ */
 
 .shop-card-wrapper {
@@ -1123,7 +1167,7 @@ body {
   position: absolute;
   top: 4px;
   right: 4px;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--lock-btn-bg);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   color: var(--text-muted);
@@ -1291,7 +1335,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--overlay-bg);
   z-index: 100;
   align-items: center;
   justify-content: center;

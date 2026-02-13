@@ -1,7 +1,13 @@
 /**
- * 游戏引擎
+ * 游戏引擎 (V2)
  * 管理游戏状态机和所有游戏逻辑
  * 不依赖任何 UI/DOM
+ *
+ * V2 变更:
+ * - 移除道具系统，替换为科技树
+ * - 商店等级由科技树自动升级
+ * - 科技/文化/信仰改为累积型（不消耗）
+ * - 每回合刷新上限
  */
 
 import type { IGameConfig } from '../core/config';
@@ -10,14 +16,14 @@ import { hexNeighbors } from '../core/hex';
 import type {
   HexCoord,
   IDistrict,
-  IGameState, IImprovement, IItemDef, IShopCard, ItemPool, IYields,
-  VictoryGoalType
+  IGameState, IImprovement, IShopCard, ITechState, IYields,
+  TechTreeId,
+  VictoryGoalType,
 } from '../core/types';
-import { addYields, emptyYields, scaleYields } from '../core/yields';
-import { SHOP_LEVEL_CONFIGS } from '../data/card-pool';
-import { DISTRICT_REGISTRY } from '../data/districts';
-import { IMPROVEMENT_REGISTRY } from '../data/improvements';
-import { ALL_ITEMS, EUREKA_DEFS, ITEM_POOL } from '../data/items';
+import { emptyYields } from '../core/yields';
+import { BASE_DISTRICTS, DISTRICT_REGISTRY } from '../data/districts';
+import { BASE_IMPROVEMENTS, IMPROVEMENT_REGISTRY } from '../data/improvements';
+import { EUREKA_DEFS, TECH_TREE_MAP } from '../data/tech-trees';
 import { FEATURE_REGISTRY, RESOURCE_REGISTRY, TERRAIN_REGISTRY } from '../data/terrains';
 import {
   autoAssignBestFoodWorker,
@@ -30,10 +36,21 @@ import {
   getTile,
   getWorkedNonCityCount,
   tileHasTag,
-  tileHasTagWithAliases,
   unlockNextOuterHex,
 } from './board';
 import { generateShopCards, resetCardCounter, setCardCounter } from './shop';
+import {
+  canSelectNode,
+  checkEurekaCondition,
+  compileTechEffects,
+  createInitialTechState,
+  getMaxSelectedLayer,
+  getSelectableNodes,
+  getShopLevelFromTech,
+  getUnlockableLayer,
+  selectNode,
+  type ITechEffectCache,
+} from './tech-engine';
 
 // ============ 事件系统 ============
 
@@ -46,7 +63,7 @@ export type GameEventType =
   | 'population_changed'
   | 'shop_upgraded'
   | 'eureka_triggered'
-  | 'item_acquired'
+  | 'tech_selected'
   | 'game_over';
 
 export type GameEventListener = (event: GameEventType, data?: unknown) => void;
@@ -57,10 +74,13 @@ export class GameEngine {
   private state: IGameState;
   private config: IGameConfig;
   private listeners: GameEventListener[] = [];
+  /** 科技效果缓存，选择节点后重新编译 */
+  private techCache: ITechEffectCache;
 
   constructor(config?: Partial<IGameConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.state = this.createInitialState();
+    this.techCache = compileTechEffects(this.state.techState);
   }
 
   // -------- 事件 --------
@@ -87,6 +107,10 @@ export class GameEngine {
 
   getConfig(): Readonly<IGameConfig> {
     return this.config;
+  }
+
+  getTechCache(): Readonly<ITechEffectCache> {
+    return this.techCache;
   }
 
   // -------- 存档系统 --------
@@ -138,17 +162,14 @@ export class GameEngine {
       resourceId: c.resource?.id,
     }));
 
-    // 序列化道具 (保存 id 列表，可能重复)
-    const itemIds = s.items.map(item => item.id);
-
     return JSON.stringify({
-      version: 1,
+      version: 2,
       turn: s.turn,
       maxTurns: s.maxTurns,
       phase: s.phase,
       storedGold: s.storedGold,
       storedProduction: s.storedProduction,
-      storedScience: s.storedScience,
+      accumulatedScience: s.accumulatedScience,
       accumulatedCulture: s.accumulatedCulture,
       accumulatedFaith: s.accumulatedFaith,
       perTurnYields: s.perTurnYields,
@@ -158,11 +179,10 @@ export class GameEngine {
       shopLevel: s.shopLevel,
       shopCards,
       shopCardLocks: s.shopCardLocks,
+      rerollsThisTurn: s.rerollsThisTurn,
       board: boardArr,
       unlockedOuterCount: s.unlockedOuterCount,
-      itemIds,
-      eurekaTriggered: s.eurekaTriggered,
-      freeItemShopEntries: s.freeItemShopEntries,
+      techState: s.techState,
       config: this.config,
     });
   }
@@ -171,7 +191,7 @@ export class GameEngine {
   restoreFromSave(json: string): boolean {
     try {
       const data = JSON.parse(json);
-      if (!data || data.version !== 1) return false;
+      if (!data || (data.version !== 2 && data.version !== 1)) return false;
 
       // 恢复配置
       if (data.config) {
@@ -214,17 +234,11 @@ export class GameEngine {
           feature: sc.featureId ? FEATURE_REGISTRY[sc.featureId] : undefined,
           resource: sc.resourceId ? RESOURCE_REGISTRY[sc.resourceId] : undefined,
         } as IShopCard;
-      }).filter((c: IShopCard) => c.terrain); // 过滤掉无法解析的卡
+      }).filter((c: IShopCard) => c.terrain);
       setCardCounter(maxCardId);
 
-      // 恢复道具
-      const itemMap = new Map<string, IItemDef>();
-      for (const item of ALL_ITEMS) {
-        itemMap.set(item.id, item);
-      }
-      const items: IItemDef[] = (data.itemIds || [])
-        .map((id: string) => itemMap.get(id))
-        .filter(Boolean) as IItemDef[];
+      // 恢复科技树状态 (v1 存档无此字段)
+      const techState: ITechState = data.techState || createInitialTechState();
 
       // 组装状态
       this.state = {
@@ -233,7 +247,7 @@ export class GameEngine {
         phase: data.phase,
         storedGold: data.storedGold,
         storedProduction: data.storedProduction,
-        storedScience: data.storedScience,
+        accumulatedScience: data.accumulatedScience ?? data.storedScience ?? 0,
         accumulatedCulture: data.accumulatedCulture,
         accumulatedFaith: data.accumulatedFaith,
         perTurnYields: data.perTurnYields || emptyYields(),
@@ -244,13 +258,13 @@ export class GameEngine {
         shopCards,
         shopCardLocks: data.shopCardLocks || [],
         selectedCard: null,
+        rerollsThisTurn: data.rerollsThisTurn || 0,
         board,
         unlockedOuterCount: data.unlockedOuterCount || 0,
-        items,
-        eurekaTriggered: data.eurekaTriggered || [],
-        freeItemShopEntries: data.freeItemShopEntries || [],
+        techState,
       };
 
+      this.techCache = compileTechEffects(this.state.techState);
       this.refreshYieldSnapshot();
       this.emit('state_changed');
       return true;
@@ -293,131 +307,12 @@ export class GameEngine {
   }
 
   getTileYields(coord: HexCoord): IYields {
-    return calculateTileYields(this.state.board, coord);
+    return calculateTileYields(this.state.board, coord, this.techCache);
   }
 
-  // ---- 道具别名系统 ----
-
-  /** 从已持有道具构建反向别名表: toTag → fromTag[] */
-  private buildAliasMap(): Map<string, string[]> {
-    const map = new Map<string, string[]>();
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'terrain_alias' && effect.fromTag && effect.toTag) {
-          const list = map.get(effect.toTag) || [];
-          if (!list.includes(effect.fromTag)) list.push(effect.fromTag);
-          map.set(effect.toTag, list);
-        }
-      }
-    }
-    return map;
-  }
-
-  /** 将 Partial<IYields> 归一化为完整 IYields */
-  private static fy(y: Partial<IYields> | undefined): IYields {
-    return {
-      gold: y?.gold || 0, food: y?.food || 0, production: y?.production || 0,
-      science: y?.science || 0, culture: y?.culture || 0, faith: y?.faith || 0,
-    };
-  }
-
-  /**
-   * 计算道具对单个地块的加成
-   * - per_tag (含 ignoreWorked / 别名): 匹配地块获得加成
-   * - per_adjacent_pair: 与特定邻居相邻时获得加成
-   * - yield_percent: 叠乘作用于此地块基础+平坦加成
-   */
-  getItemBonusForTile(coord: HexCoord): IYields {
-    const tile = getTile(this.state.board, coord);
-    if (!tile || !tile.terrain) return emptyYields();
-
-    const aliases = this.buildAliasMap();
-    let bonus = emptyYields();
-
-    // Pass 1: per_tag
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'per_tag' && effect.matchTag && effect.yields) {
-          if (!tile.isWorked && !effect.ignoreWorked) continue;
-          if (tileHasTagWithAliases(tile, effect.matchTag, aliases)) {
-            bonus = addYields(bonus, GameEngine.fy(effect.yields));
-          }
-        }
-      }
-    }
-
-    // Pass 2: per_adjacent_pair
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'per_adjacent_pair' && effect.matchTag && effect.secondTag && effect.yields) {
-          if (!tile.isWorked && !effect.ignoreWorked) continue;
-          if (tileHasTagWithAliases(tile, effect.matchTag, aliases)) {
-            const hasNeighbor = hexNeighbors(coord).some(n => {
-              const nt = getTile(this.state.board, n);
-              return nt && nt.terrain && tileHasTagWithAliases(nt, effect.secondTag!, aliases);
-            });
-            if (hasNeighbor) {
-              bonus = addYields(bonus, GameEngine.fy(effect.yields));
-            }
-          }
-        }
-      }
-    }
-
-    // Pass 3: yield_percent (叠乘) — 仅工作地块
-    if (tile.isWorked) {
-      const baseYields = calculateTileYields(this.state.board, coord);
-      let withBonus = addYields(baseYields, bonus);
-      for (const item of this.state.items) {
-        for (const effect of item.effects) {
-          if (effect.type === 'yield_percent' && effect.yieldKey && effect.percent) {
-            const k = effect.yieldKey;
-            withBonus[k] = Math.floor(withBonus[k] * (1 + effect.percent / 100));
-          }
-        }
-      }
-      // 返回: 最终 - 基础 = 道具总加成
-      return {
-        gold: withBonus.gold - baseYields.gold,
-        food: withBonus.food - baseYields.food,
-        production: withBonus.production - baseYields.production,
-        science: withBonus.science - baseYields.science,
-        culture: withBonus.culture - baseYields.culture,
-        faith: withBonus.faith - baseYields.faith,
-      };
-    }
-
-    return bonus;
-  }
-
-  /**
-   * 获取全局道具加成（flat_per_turn，不归属于单个地块）
-   */
-  getGlobalItemBonus(): IYields {
-    let bonus = emptyYields();
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'flat_per_turn' && effect.yields) {
-          const ey = effect.yields;
-          bonus = addYields(bonus, {
-            gold: ey.gold || 0,
-            food: ey.food || 0,
-            production: ey.production || 0,
-            science: ey.science || 0,
-            culture: ey.culture || 0,
-            faith: ey.faith || 0,
-          });
-        }
-      }
-    }
-    return bonus;
-  }
-
-  /** 获取地块总有效产出（基础 + 道具加成） */
+  /** 获取地块总有效产出 */
   getTileEffectiveYields(coord: HexCoord): IYields {
-    const base = calculateTileYields(this.state.board, coord);
-    const itemBonus = this.getItemBonusForTile(coord);
-    return addYields(base, itemBonus);
+    return calculateTileYields(this.state.board, coord, this.techCache);
   }
 
   // -------- 游戏初始化 --------
@@ -430,7 +325,7 @@ export class GameEngine {
       phase: 'shopping',
       storedGold: this.config.initialGold,
       storedProduction: 0,
-      storedScience: 0,
+      accumulatedScience: 0,
       accumulatedCulture: 0,
       accumulatedFaith: 0,
       perTurnYields: emptyYields(),
@@ -441,20 +336,20 @@ export class GameEngine {
       shopCards: [],
       shopCardLocks: [],
       selectedCard: null,
+      rerollsThisTurn: 0,
       board: createBoard(),
       unlockedOuterCount: 0,
-      items: [],
-      eurekaTriggered: [],
-      freeItemShopEntries: [],
+      techState: createInitialTechState(),
     };
   }
 
-  /** 开始新游戏（可选传入新配置，用于设置面板更新后重新开始） */
+  /** 开始新游戏 */
   startNewGame(newConfig?: Partial<IGameConfig>): void {
     if (newConfig) {
       this.config = { ...DEFAULT_CONFIG, ...newConfig };
     }
     this.state = this.createInitialState();
+    this.techCache = compileTechEffects(this.state.techState);
     this.startTurn();
   }
 
@@ -464,19 +359,25 @@ export class GameEngine {
   private startTurn(): void {
     this.state.turn++;
 
-    // 1. 产出结算（含道具效果）
+    // 1. 产出结算
     this.collectYields();
 
     // 2. 人口增减
     this.checkPopulationGrowth();
 
-    // 3. 刷新商店（保留锁定的卡牌）
+    // 3. 刷新商店
     this.refreshShop();
 
-    // 4. 检查尤里卡时刻
+    // 4. 重置每回合刷新计数
+    this.state.rerollsThisTurn = 0;
+
+    // 5. 检查尤里卡
     this.checkEurekas();
 
-    // 5. 进入购物阶段
+    // 6. 检查科技树商店升级
+    this.updateShopLevel();
+
+    // 7. 进入购物阶段
     this.state.phase = 'shopping';
     this.state.selectedCard = null;
 
@@ -490,7 +391,6 @@ export class GameEngine {
     const oldCards = this.state.shopCards;
     const count = this.config.shopCardCount;
 
-    // 计算需要刷新的槽位数
     const lockedCards: (IShopCard | null)[] = [];
     let refreshCount = 0;
     for (let i = 0; i < count; i++) {
@@ -502,7 +402,6 @@ export class GameEngine {
       }
     }
 
-    // 生成新卡填入空槽位
     const newCards = generateShopCards(refreshCount, this.state.shopLevel);
     let newIdx = 0;
     const result: IShopCard[] = [];
@@ -522,23 +421,17 @@ export class GameEngine {
     this.state.shopCardLocks = newLocks;
   }
 
-  /** 结算产出（含道具效果） */
+  /** 结算产出 */
   private collectYields(): void {
-    // 基础产出
-    const baseYields = calculateTotalYields(this.state.board);
-
-    // 应用道具效果
-    const yields = this.applyItemEffects(baseYields);
+    const yields = calculateTotalYields(this.state.board, this.techCache);
     this.state.perTurnYields = yields;
 
     // 投资型
     this.state.storedGold += yields.gold;
     this.state.storedProduction += yields.production;
 
-    // 科技（可花费型，剩余计入得分）
-    this.state.storedScience += yields.science;
-
-    // 得分型
+    // 累积型（不消耗，用于科技树解锁 + 终局得分）
+    this.state.accumulatedScience += yields.science;
     this.state.accumulatedCulture += yields.culture;
     this.state.accumulatedFaith += yields.faith;
 
@@ -550,94 +443,16 @@ export class GameEngine {
     this.state.foodProgress += netFood;
   }
 
-  /** 应用道具被动效果到产出 */
-  private applyItemEffects(baseYields: IYields): IYields {
-    const aliases = this.buildAliasMap();
-    let yields = { ...baseYields };
-
-    // 1. flat_per_turn
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'flat_per_turn' && effect.yields) {
-          yields = addYields(yields, GameEngine.fy(effect.yields));
-        }
-      }
-    }
-
-    // 2. per_tag (含 ignoreWorked 和别名)
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'per_tag' && effect.matchTag && effect.yields) {
-          let count = 0;
-          for (const [, tile] of this.state.board) {
-            if (!tile.terrain) continue;
-            if (!tile.isWorked && !effect.ignoreWorked) continue;
-            if (tileHasTagWithAliases(tile, effect.matchTag, aliases)) count++;
-          }
-          yields = addYields(yields, scaleYields(GameEngine.fy(effect.yields), count));
-        }
-      }
-    }
-
-    // 3. per_adjacent_pair
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'per_adjacent_pair' && effect.matchTag && effect.secondTag && effect.yields) {
-          let count = 0;
-          for (const [, tile] of this.state.board) {
-            if (!tile.terrain) continue;
-            if (!tile.isWorked && !effect.ignoreWorked) continue;
-            if (tileHasTagWithAliases(tile, effect.matchTag, aliases)) {
-              const hasMatch = hexNeighbors(tile.coord).some(n => {
-                const nt = getTile(this.state.board, n);
-                return nt && nt.terrain && tileHasTagWithAliases(nt, effect.secondTag!, aliases);
-              });
-              if (hasMatch) count++;
-            }
-          }
-          yields = addYields(yields, scaleYields(GameEngine.fy(effect.yields), count));
-        }
-      }
-    }
-
-    // 4. yield_percent (叠乘: 每个效果独立乘算)
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'yield_percent' && effect.yieldKey && effect.percent) {
-          yields[effect.yieldKey] = Math.floor(
-            yields[effect.yieldKey] * (1 + effect.percent / 100),
-          );
-        }
-      }
-    }
-
-    // 5. convert_yield (从一种产出转化为另一种, 源减少)
-    for (const item of this.state.items) {
-      for (const effect of item.effects) {
-        if (effect.type === 'convert_yield' && effect.fromYieldKey && effect.toYieldKey && effect.convertRatio) {
-          const amount = Math.floor(yields[effect.fromYieldKey] * effect.convertRatio);
-          yields[effect.fromYieldKey] -= amount;
-          yields[effect.toYieldKey] += amount;
-        }
-      }
-    }
-
-    return yields;
-  }
-
   // -------- 非线性人口增长 --------
 
-  /** 获取指定人口数下的增长阈值（非线性：随人口递增） */
   getGrowthThresholdForPop(pop: number): number {
     return this.config.baseGrowthFood + Math.max(0, pop - 1) * this.config.growthFoodPerPop;
   }
 
-  /** 获取当前人口的增长阈值 */
   getGrowthThreshold(): number {
     return this.getGrowthThresholdForPop(this.state.population);
   }
 
-  /** 人口增减 */
   private checkPopulationGrowth(): void {
     let threshold = this.getGrowthThresholdForPop(this.state.population);
     while (this.state.foodProgress >= threshold) {
@@ -661,12 +476,11 @@ export class GameEngine {
     }
   }
 
-  /** 根据人口解锁外圈格子（优先低环数） */
   private checkOuterUnlock(): void {
     const shouldUnlock = Math.max(0, this.state.population - 1);
     while (this.state.unlockedOuterCount < shouldUnlock) {
       const unlocked = unlockNextOuterHex(this.state.board);
-      if (!unlocked) break; // 没有更多可解锁
+      if (!unlocked) break;
       this.state.unlockedOuterCount++;
       this.emit('hex_unlocked');
     }
@@ -674,7 +488,6 @@ export class GameEngine {
 
   // -------- 金币解锁格子 --------
 
-  /** 获取解锁指定格子所需的金币 */
   getHexUnlockCost(coord: HexCoord): number {
     const tile = getTile(this.state.board, coord);
     if (!tile) return Infinity;
@@ -686,7 +499,6 @@ export class GameEngine {
     }
   }
 
-  /** 金币解锁指定格子 */
   unlockHexByGold(coord: HexCoord): boolean {
     const tile = getTile(this.state.board, coord);
     if (!tile || tile.unlocked || tile.ring <= 1) return false;
@@ -694,7 +506,6 @@ export class GameEngine {
     const cost = this.getHexUnlockCost(coord);
     if (this.state.storedGold < cost) return false;
 
-    // 检查是否有已解锁的邻居
     const neighbors: HexCoord[] = hexNeighbors(coord);
     const hasUnlockedNeighbor = neighbors.some((n: HexCoord) => {
       const nt = getTile(this.state.board, n);
@@ -712,13 +523,11 @@ export class GameEngine {
 
   // -------- 工人管理 --------
 
-  /** 获取可用工人数 */
   getAvailableWorkers(): number {
     const workedNonCity = getWorkedNonCityCount(this.state.board);
     return Math.max(0, this.state.population - workedNonCity);
   }
 
-  /** 手动分配工人到指定地块 */
   assignWorker(coord: HexCoord): boolean {
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.terrain || tile.isWorked) return false;
@@ -731,7 +540,6 @@ export class GameEngine {
     return true;
   }
 
-  /** 手动取消工人分配 */
   unassignWorker(coord: HexCoord): boolean {
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.terrain || !tile.isWorked) return false;
@@ -743,7 +551,6 @@ export class GameEngine {
     return true;
   }
 
-  /** 撤回所有工人（城市中心除外） */
   private clearAllWorkers(): void {
     for (const [, tile] of this.state.board) {
       if (tile.isWorked && tile.terrain && tile.terrain.id !== 'city_center') {
@@ -752,7 +559,6 @@ export class GameEngine {
     }
   }
 
-  /** 一键重新分配：全局最优（总产出价值最大化） */
   reassignAllWorkers(): void {
     this.clearAllWorkers();
     for (let i = 0; i < this.state.population; i++) {
@@ -762,7 +568,6 @@ export class GameEngine {
     this.emit('state_changed');
   }
 
-  /** 一键重新分配：粮食优先（食物产出最大化） */
   reassignWorkersFoodPriority(): void {
     this.clearAllWorkers();
     for (let i = 0; i < this.state.population; i++) {
@@ -772,19 +577,16 @@ export class GameEngine {
     this.emit('state_changed');
   }
 
-  /** 刷新每回合产出快照（含道具效果） */
   private refreshYieldSnapshot(): void {
-    const baseYields = calculateTotalYields(this.state.board);
-    const yields = this.applyItemEffects(baseYields);
+    const yields = calculateTotalYields(this.state.board, this.techCache);
     this.state.perTurnYields = yields;
     const grossFood = yields.food;
     const consumption = this.state.population * this.config.foodPerPop;
     this.state.perTurnNetFood = grossFood - consumption;
   }
 
-  // -------- 商店操作（购买地块卡牌） --------
+  // -------- 商店操作 --------
 
-  /** 切换商店卡牌锁定状态 */
   toggleShopLock(index: number): void {
     while (this.state.shopCardLocks.length < this.state.shopCards.length) {
       this.state.shopCardLocks.push(false);
@@ -795,7 +597,6 @@ export class GameEngine {
     }
   }
 
-  /** 选择一张商店卡牌 */
   selectCard(card: IShopCard): boolean {
     if (this.state.phase !== 'shopping' && this.state.phase !== 'placing') return false;
     if (this.state.storedGold < card.cost) return false;
@@ -806,20 +607,17 @@ export class GameEngine {
     return true;
   }
 
-  /** 取消选择 */
   deselectCard(): void {
     this.state.selectedCard = null;
     this.state.phase = 'shopping';
     this.emit('state_changed');
   }
 
-  /** 获取当前选中卡牌的有效放置位置（仅空地） */
   getValidPlacements(): HexCoord[] {
     if (!this.state.selectedCard) return [];
     return getEmptyUnlockedHexes(this.state.board);
   }
 
-  /** 放置选中的地块卡牌 */
   placeCard(coord: HexCoord): boolean {
     const card = this.state.selectedCard;
     if (!card) return false;
@@ -833,14 +631,12 @@ export class GameEngine {
     tile.resource = card.resource || null;
     tile.goldInvested = card.cost;
 
-    // 自动分配工人
     if (this.getAvailableWorkers() > 0 && tile.terrain) {
       tile.isWorked = true;
     }
 
     this.state.storedGold -= card.cost;
 
-    // 从商店移除并清除对应锁
     const idx = this.state.shopCards.findIndex(c => c.instanceId === card.instanceId);
     if (idx >= 0) {
       this.state.shopCards.splice(idx, 1);
@@ -856,14 +652,15 @@ export class GameEngine {
     return true;
   }
 
-  /** 刷新商店 */
+  /** 刷新商店（每回合限制次数） */
   rerollShop(): boolean {
     if (this.state.phase !== 'shopping') return false;
     if (this.state.storedGold < this.config.rerollCost) return false;
+    if (this.state.rerollsThisTurn >= this.config.maxRerollsPerTurn) return false;
 
     this.state.storedGold -= this.config.rerollCost;
+    this.state.rerollsThisTurn++;
 
-    // 锁定的卡保留
     const locks = this.state.shopCardLocks;
     const oldCards = this.state.shopCards;
     const count = this.config.shopCardCount;
@@ -902,29 +699,37 @@ export class GameEngine {
     return true;
   }
 
-  // -------- 建造系统（消耗生产力） --------
+  /** 获取本回合剩余刷新次数 */
+  getRemainingRerolls(): number {
+    return Math.max(0, this.config.maxRerollsPerTurn - this.state.rerollsThisTurn);
+  }
 
-  /** 在指定地块建造改良设施 */
+  // -------- 建造系统 --------
+
   buildImprovement(coord: HexCoord, improvementId: string): boolean {
     const improvement = IMPROVEMENT_REGISTRY[improvementId];
     if (!improvement) return false;
+
+    // 检查是否已解锁
+    if (!this.isImprovementAvailable(improvementId)) return false;
 
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.terrain) return false;
     if (tile.district) return false;
     if (tile.terrain.id === 'city_center') return false;
 
-    // 检查放置条件
+    // 检查放置条件（含科技树带来的标签变化）
     for (const reqTag of improvement.placementRequireTags) {
-      if (!tileHasTag(tile, reqTag)) return false;
+      if (!this.tileHasTagWithTech(tile, reqTag)) return false;
     }
 
-    if (this.state.storedProduction < improvement.productionCost) return false;
+    const cost = this.getEffectiveBuildCost(improvement.productionCost, 'improvement');
+    if (this.state.storedProduction < cost) return false;
 
-    this.state.storedProduction -= improvement.productionCost;
+    this.state.storedProduction -= cost;
     tile.improvement = improvement;
     tile.improvementLevel = 1;
-    tile.productionInvested += improvement.productionCost;
+    tile.productionInvested += cost;
 
     this.refreshYieldSnapshot();
     this.emit('tile_placed', coord);
@@ -932,10 +737,12 @@ export class GameEngine {
     return true;
   }
 
-  /** 在指定地块建造区域（替换已有改良） */
   buildDistrict(coord: HexCoord, districtId: string): boolean {
     const district = DISTRICT_REGISTRY[districtId];
     if (!district) return false;
+
+    // 检查是否已解锁
+    if (!this.isDistrictAvailable(districtId)) return false;
 
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.terrain) return false;
@@ -943,17 +750,18 @@ export class GameEngine {
     if (tile.terrain.id === 'city_center') return false;
 
     for (const reqTag of district.placementRequireTags) {
-      if (!tileHasTag(tile, reqTag)) return false;
+      if (!this.tileHasTagWithTech(tile, reqTag)) return false;
     }
 
-    if (this.state.storedProduction < district.productionCost) return false;
+    const cost = this.getEffectiveBuildCost(district.productionCost, 'district');
+    if (this.state.storedProduction < cost) return false;
 
-    this.state.storedProduction -= district.productionCost;
+    this.state.storedProduction -= cost;
     tile.district = district;
     tile.districtLevel = 1;
     tile.improvement = null;
     tile.improvementLevel = 0;
-    tile.productionInvested += district.productionCost;
+    tile.productionInvested += cost;
 
     this.refreshYieldSnapshot();
     this.emit('tile_placed', coord);
@@ -961,23 +769,23 @@ export class GameEngine {
     return true;
   }
 
-  /** 升级已有改良设施或区域 (几何倍率费用) */
+  /** 升级已有改良设施或区域 */
   upgradeTile(coord: HexCoord): boolean {
     const tile = getTile(this.state.board, coord);
     if (!tile) return false;
 
-    // 优先尝试改良升级
     if (tile.improvement) {
       if (tile.improvementLevel >= tile.improvement.maxLevel) return false;
-      const cost = this.getImprovementUpgradeCost(tile.improvementLevel);
+      const baseCost = this.getImprovementUpgradeCost(tile.improvementLevel);
+      const cost = this.getEffectiveUpgradeCost(baseCost, 'improvement');
       if (this.state.storedProduction < cost) return false;
       this.state.storedProduction -= cost;
       tile.improvementLevel++;
       tile.productionInvested += cost;
     } else if (tile.district) {
-      // 区域升级
       if (tile.districtLevel >= tile.district.maxLevel) return false;
-      const cost = this.getDistrictLevelUpCost(tile.districtLevel);
+      const baseCost = this.getDistrictLevelUpCost(tile.districtLevel);
+      const cost = this.getEffectiveUpgradeCost(baseCost, 'district');
       if (this.state.storedProduction < cost) return false;
       this.state.storedProduction -= cost;
       tile.districtLevel++;
@@ -1002,9 +810,40 @@ export class GameEngine {
     return this.config.districtUpgradeCost * Math.pow(2, currentLevel - 1);
   }
 
+  /** 应用科技树费用减免 */
+  private getEffectiveBuildCost(baseCost: number, category: 'improvement' | 'district'): number {
+    let reduction = 0;
+    if (category === 'district') {
+      reduction += this.techCache.costReductions.get('district_build') || 0;
+    }
+    reduction += this.techCache.costReductions.get('all_build') || 0;
+    reduction = Math.min(80, reduction);
+    return Math.max(1, Math.floor(baseCost * (1 - reduction / 100)));
+  }
+
+  /** 应用科技树升级费用减免 */
+  private getEffectiveUpgradeCost(baseCost: number, category: 'improvement' | 'district'): number {
+    let reduction = 0;
+    if (category === 'improvement') {
+      reduction += this.techCache.costReductions.get('improvement_upgrade') || 0;
+    }
+    reduction += this.techCache.costReductions.get('all_build') || 0;
+    reduction = Math.min(80, reduction);
+    return Math.max(1, Math.floor(baseCost * (1 - reduction / 100)));
+  }
+
+  /** 带科技树别名的 tag 检查 */
+  private tileHasTagWithTech(tile: import('../core/types').ITile, tag: string): boolean {
+    if (tileHasTag(tile, tag)) return true;
+    if (tile.terrain) {
+      const addedTags = this.techCache.terrainAliases.get(tile.terrain.id);
+      if (addedTags && addedTags.includes(tag)) return true;
+    }
+    return false;
+  }
+
   // -------- 出售地块 --------
 
-  /** 出售地块，返还部分金币和生产力 */
   sellTile(coord: HexCoord): { goldRefund: number; productionRefund: number } | null {
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.terrain || tile.terrain.id === 'city_center') return null;
@@ -1013,18 +852,17 @@ export class GameEngine {
     const goldRefund = Math.floor(tile.goldInvested * ratio);
     const productionRefund = Math.floor(tile.productionInvested * ratio);
 
-    // 重置地块
     tile.terrain = null;
     tile.feature = null;
     tile.resource = null;
     tile.improvement = null;
     tile.improvementLevel = 0;
     tile.district = null;
+    tile.districtLevel = 0;
     tile.isWorked = false;
     tile.goldInvested = 0;
     tile.productionInvested = 0;
 
-    // 返还资源
     this.state.storedGold += goldRefund;
     this.state.storedProduction += productionRefund;
 
@@ -1033,205 +871,119 @@ export class GameEngine {
     return { goldRefund, productionRefund };
   }
 
-  // -------- 商店升级（消耗科技） --------
+  // -------- 商店升级（V2: 由科技树自动触发） --------
 
-  /** 升级商店等级 */
   upgradeShop(): boolean {
-    const nextLevel = this.state.shopLevel + 1;
-    const config = SHOP_LEVEL_CONFIGS.find(c => c.level === nextLevel);
-    if (!config) return false;
+    return false; // V2: 不支持手动升级
+  }
 
-    if (this.state.storedScience < config.upgradeCost) return false;
+  getShopUpgradeCost(): number | null {
+    return null; // V2: 无手动升级费用
+  }
 
-    this.state.storedScience -= config.upgradeCost;
-    this.state.shopLevel = nextLevel;
+  private updateShopLevel(): void {
+    const newLevel = getShopLevelFromTech(this.state.techState);
+    if (newLevel > this.state.shopLevel) {
+      this.state.shopLevel = newLevel;
+      this.emit('shop_upgraded');
+    }
+  }
 
-    this.emit('shop_upgraded');
+  // -------- 科技树系统 --------
+
+  /** 获取某棵科技树对应的累积资源值 */
+  getAccumulatedForTree(treeId: TechTreeId): number {
+    const tree = TECH_TREE_MAP[treeId];
+    switch (tree.resource) {
+      case 'science': return this.state.accumulatedScience;
+      case 'culture': return this.state.accumulatedCulture;
+      case 'faith': return this.state.accumulatedFaith;
+      default: return 0;
+    }
+  }
+
+  /** 检查是否可以选择某个节点 */
+  canSelectTechNode(nodeId: string, treeId: TechTreeId): boolean {
+    return canSelectNode(
+      this.state.techState,
+      nodeId,
+      treeId,
+      this.getAccumulatedForTree(treeId),
+    );
+  }
+
+  /** 选择科技树节点 */
+  selectTechNode(nodeId: string, treeId: TechTreeId): boolean {
+    if (!this.canSelectTechNode(nodeId, treeId)) return false;
+
+    selectNode(this.state.techState, nodeId, treeId);
+
+    // 重新编译科技效果
+    this.techCache = compileTechEffects(this.state.techState);
+
+    // 检查商店升级
+    this.updateShopLevel();
+
+    // 重新计算产出
+    this.refreshYieldSnapshot();
+
+    this.emit('tech_selected', { nodeId, treeId });
     this.emit('state_changed');
     return true;
   }
 
-  /** 获取下一级商店升级费用（null表示已满级） */
-  getShopUpgradeCost(): number | null {
-    const nextLevel = this.state.shopLevel + 1;
-    const config = SHOP_LEVEL_CONFIGS.find(c => c.level === nextLevel);
-    return config ? config.upgradeCost : null;
+  /** 获取某棵树可解锁的层级 */
+  getTreeUnlockableLayer(treeId: TechTreeId): number {
+    return getUnlockableLayer(
+      this.state.techState,
+      treeId,
+      this.getAccumulatedForTree(treeId),
+    );
   }
 
-  // -------- 道具系统 --------
-
-  /** 获取进入道具商店的费用 */
-  getItemShopCost(pool: ItemPool): number {
-    switch (pool) {
-      case 'gold': return this.config.itemShopGoldCost;
-      case 'culture': return this.config.itemShopCultureCost;
-      case 'faith': return this.config.itemShopFaithCost;
-    }
+  /** 获取某棵树已选的最高层级 */
+  getTreeMaxSelectedLayer(treeId: TechTreeId): number {
+    return getMaxSelectedLayer(this.state.techState, treeId);
   }
 
-  /** 获取用于支付门票的资源名 */
-  getItemShopCurrency(pool: ItemPool): string {
-    switch (pool) {
-      case 'gold': return '🪙';
-      case 'culture': return '🎭';
-      case 'faith': return '🙏';
-    }
+  /** 获取某棵树某层的可选节点 */
+  getTreeSelectableNodes(treeId: TechTreeId, layer: number) {
+    return getSelectableNodes(this.state.techState, treeId, layer);
   }
 
-  /** 能否进入指定道具商店 (付费或免费) */
-  canEnterItemShop(pool: ItemPool): boolean {
-    // 有免费券
-    if (this.state.freeItemShopEntries.includes(pool)) return true;
-    // 有足够资源
-    return this.getAvailableCurrency(pool) >= this.getItemShopCost(pool);
-  }
+  // -------- 尤里卡系统 --------
 
-  /** 获取指定类型的可用资源 */
-  private getAvailableCurrency(pool: ItemPool): number {
-    switch (pool) {
-      case 'gold': return this.state.storedGold;
-      case 'culture': return this.state.accumulatedCulture;
-      case 'faith': return this.state.accumulatedFaith;
-    }
-  }
-
-  /** 支付门票并生成道具选项 */
-  enterItemShop(pool: ItemPool): IItemDef[] | null {
-    // 检查免费券
-    const freeIdx = this.state.freeItemShopEntries.indexOf(pool);
-    if (freeIdx >= 0) {
-      this.state.freeItemShopEntries.splice(freeIdx, 1);
-    } else {
-      const cost = this.getItemShopCost(pool);
-      switch (pool) {
-        case 'gold':
-          if (this.state.storedGold < cost) return null;
-          this.state.storedGold -= cost;
-          break;
-        case 'culture':
-          if (this.state.accumulatedCulture < cost) return null;
-          this.state.accumulatedCulture -= cost;
-          break;
-        case 'faith':
-          if (this.state.accumulatedFaith < cost) return null;
-          this.state.accumulatedFaith -= cost;
-          break;
-      }
-    }
-
-    // 从池中随机抽取
-    const poolItems = ITEM_POOL[pool] || [];
-    const offerings = this.randomPickItems(poolItems, this.config.itemShopOfferingCount);
-
-    this.emit('state_changed');
-    return offerings;
-  }
-
-  /** 从池中随机不重复抽取N个道具 */
-  private randomPickItems(pool: IItemDef[], count: number): IItemDef[] {
-    // 加权抽取（rarity越高权重越低）
-    const weighted = pool.map(item => ({
-      item,
-      weight: item.rarity === 1 ? 10 : item.rarity === 2 ? 5 : 2,
-    }));
-
-    const result: IItemDef[] = [];
-    const available = [...weighted];
-
-    for (let i = 0; i < count && available.length > 0; i++) {
-      const totalWeight = available.reduce((s, w) => s + w.weight, 0);
-      let roll = Math.random() * totalWeight;
-      let picked = available[0];
-      for (const w of available) {
-        roll -= w.weight;
-        if (roll <= 0) {
-          picked = w;
-          break;
-        }
-      }
-      result.push(picked.item);
-      const idx = available.indexOf(picked);
-      if (idx >= 0) available.splice(idx, 1);
-    }
-
-    return result;
-  }
-
-  /** 玩家选择一个道具并获得 */
-  claimItem(item: IItemDef): void {
-    this.state.items.push(item);
-
-    // 处理即时效果
-    for (const effect of item.effects) {
-      switch (effect.type) {
-        case 'instant': {
-          if (effect.yields) {
-            if (effect.yields.gold) this.state.storedGold += effect.yields.gold;
-            if (effect.yields.production) this.state.storedProduction += effect.yields.production;
-            if (effect.yields.science) this.state.storedScience += effect.yields.science;
-            if (effect.yields.culture) this.state.accumulatedCulture += effect.yields.culture;
-            if (effect.yields.faith) this.state.accumulatedFaith += effect.yields.faith;
-            if (effect.yields.food) this.state.foodProgress += effect.yields.food;
-          }
-          break;
-        }
-        case 'pop_growth': {
-          this.state.population++;
-          autoAssignBestWorker(this.state.board);
-          this.checkOuterUnlock();
-          break;
-        }
-      }
-    }
-
-    this.refreshYieldSnapshot();
-    this.emit('item_acquired', item);
-    this.emit('state_changed');
-  }
-
-  // -------- 尤里卡时刻 --------
-
-  /** 检查尤里卡条件 */
   private checkEurekas(): void {
     for (const eureka of EUREKA_DEFS) {
-      if (this.state.eurekaTriggered.includes(eureka.id)) continue;
-      if (this.state.turn !== eureka.checkTurn) continue;
+      if (this.state.techState.triggeredEurekas.includes(eureka.id)) continue;
 
-      if (this.checkEurekaCondition(eureka.id)) {
-        this.state.eurekaTriggered.push(eureka.id);
-        this.state.freeItemShopEntries.push(eureka.pool);
+      if (checkEurekaCondition(
+        eureka.id,
+        this.state.board,
+        this.state.population,
+        this.state.accumulatedCulture,
+        this.state.accumulatedFaith,
+        this.state.accumulatedScience,
+      )) {
+        this.state.techState.triggeredEurekas.push(eureka.id);
+
+        // 应用阈值减免
+        this.applyEurekaReduction(eureka.targetTree, eureka.targetLayer, eureka.reductionPercent, eureka.id);
+
         this.emit('eureka_triggered', eureka);
       }
     }
   }
 
-  /** 检查具体的尤里卡条件 */
-  private checkEurekaCondition(id: string): boolean {
-    const s = this.state;
-    switch (id) {
-      case 'eureka_pop3_t5':
-        return s.population >= 3;
-      case 'eureka_prod15_t5':
-        return s.storedProduction >= 15;
-      case 'eureka_district_t8': {
-        for (const [, tile] of s.board) {
-          if (tile.district) return true;
-        }
-        return false;
-      }
-      case 'eureka_pop5_t12':
-        return s.population >= 5;
-      case 'eureka_culture20_t10':
-        return s.accumulatedCulture >= 20;
-      case 'eureka_tiles8_t15': {
-        let workedCount = 0;
-        for (const [, tile] of s.board) {
-          if (tile.isWorked) workedCount++;
-        }
-        return workedCount >= 8;
-      }
-      default:
-        return false;
+  private applyEurekaReduction(targetTree: TechTreeId, targetLayer: number, percent: number, _eurekaId: string): void {
+    const thresholds = this.state.techState.effectiveThresholds[targetTree];
+    const baseThresholds = TECH_TREE_MAP[targetTree].thresholds;
+
+    const idx = targetLayer - 1;
+    if (idx >= 0 && idx < 4) {
+      // 只能减免到原始值的20%
+      const minThreshold = Math.max(1, Math.floor(baseThresholds[idx] * 0.2));
+      thresholds[idx] = Math.max(minThreshold, Math.floor(thresholds[idx] * (1 - percent / 100)));
     }
   }
 
@@ -1254,7 +1006,7 @@ export class GameEngine {
   // -------- 得分 --------
 
   getFinalScore(): { science: number; culture: number; faith: number; total: number } {
-    const science = this.state.storedScience;
+    const science = this.state.accumulatedScience;
     const culture = this.state.accumulatedCulture;
     const faith = this.state.accumulatedFaith;
     return { science, culture, faith, total: science + culture + faith };
@@ -1262,7 +1014,6 @@ export class GameEngine {
 
   // -------- 胜利目标 --------
 
-  /** 获取当前目标类型对应的资源值 */
   getGoalCurrentValue(goalType?: VictoryGoalType): number {
     const type = goalType ?? this.config.victoryGoalType;
     switch (type) {
@@ -1270,13 +1021,12 @@ export class GameEngine {
       case 'population': return this.state.population;
       case 'gold': return this.state.storedGold;
       case 'faith': return this.state.accumulatedFaith;
-      case 'science': return this.state.storedScience;
+      case 'science': return this.state.accumulatedScience;
       case 'culture': return this.state.accumulatedCulture;
       default: return 0;
     }
   }
 
-  /** 获取当前目标进度 */
   getGoalProgress(): { type: VictoryGoalType; current: number; target: number; ratio: number; achieved: boolean } {
     const type = this.config.victoryGoalType;
     const target = this.config.victoryGoalTarget;
@@ -1285,7 +1035,6 @@ export class GameEngine {
     return { type, current, target, ratio, achieved: current >= target };
   }
 
-  /** 获取目标预设信息 */
   getGoalPreset(): { name: string; icon: string; description: string } {
     const preset = VICTORY_GOAL_PRESETS.find(p => p.type === this.config.victoryGoalType);
     return preset
@@ -1295,27 +1044,41 @@ export class GameEngine {
 
   // -------- 建造查询 --------
 
-  /** 获取指定地块可建造的改良列表 */
+  /** 检查改良是否可用（基础 + 科技树解锁） */
+  isImprovementAvailable(improvementId: string): boolean {
+    if (BASE_IMPROVEMENTS.includes(improvementId)) return true;
+    return this.techCache.unlockedImprovements.has(improvementId);
+  }
+
+  /** 检查区域是否可用（基础 + 科技树解锁） */
+  isDistrictAvailable(districtId: string): boolean {
+    if (BASE_DISTRICTS.includes(districtId)) return true;
+    return this.techCache.unlockedDistricts.has(districtId);
+  }
+
+  /** 获取指定地块可建造的改良列表（含科技树解锁检查） */
   getAvailableImprovements(coord: HexCoord): IImprovement[] {
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.terrain || tile.district || tile.terrain.id === 'city_center') return [];
 
     return Object.values(IMPROVEMENT_REGISTRY).filter(imp => {
+      if (!this.isImprovementAvailable(imp.id)) return false;
       for (const reqTag of imp.placementRequireTags) {
-        if (!tileHasTag(tile, reqTag)) return false;
+        if (!this.tileHasTagWithTech(tile, reqTag)) return false;
       }
       return true;
     });
   }
 
-  /** 获取指定地块可建造的区域列表 */
+  /** 获取指定地块可建造的区域列表（含科技树解锁检查） */
   getAvailableDistricts(coord: HexCoord): IDistrict[] {
     const tile = getTile(this.state.board, coord);
     if (!tile || !tile.terrain || tile.district || tile.terrain.id === 'city_center') return [];
 
     return Object.values(DISTRICT_REGISTRY).filter(dist => {
+      if (!this.isDistrictAvailable(dist.id)) return false;
       for (const reqTag of dist.placementRequireTags) {
-        if (!tileHasTag(tile, reqTag)) return false;
+        if (!this.tileHasTagWithTech(tile, reqTag)) return false;
       }
       return true;
     });

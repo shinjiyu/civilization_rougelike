@@ -1,7 +1,8 @@
 /**
- * 六角棋盘 Canvas 渲染器
+ * 六角棋盘 Canvas 2D 渲染器
  * 负责绘制棋盘、处理鼠标/触摸事件
  * 支持响应式 hex 尺寸，4环棋盘
+ * 实现 IHexRenderer 接口，可与 3D 渲染器切换
  */
 
 import { hexCorners, hexKey, hexNeighbors, hexToPixel, pixelToHex } from '../core/hex';
@@ -27,16 +28,33 @@ export class HexRenderer {
   private hoveredHex: HexCoord | null = null;
   private selectedHex: HexCoord | null = null;
   private validPlacements: Set<string> = new Set();
+  private yieldLabelsVisible = true;
 
   onHexClick: ((coord: HexCoord) => void) | null = null;
   onHexHover: ((coord: HexCoord | null) => void) | null = null;
+
+  private resizeHandler: () => void;
+
+  private initialized = false;
 
   constructor(canvas: HTMLCanvasElement, engine: GameEngine) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     this.engine = engine;
-    this.setupCanvas();
+    this.resizeHandler = () => {
+      if (this.canvas.offsetParent !== null) {
+        this.setupCanvas();
+        this.draw();
+      }
+    };
     this.bindEvents();
+  }
+
+  /** 确保 canvas 已经初始化（需要在可见时调用） */
+  private ensureInit(): void {
+    if (this.initialized) return;
+    this.setupCanvas();
+    this.initialized = true;
   }
 
   private setupCanvas(): void {
@@ -86,16 +104,34 @@ export class HexRenderer {
       e.preventDefault();
     }, { passive: false });
 
-    window.addEventListener('resize', () => {
-      this.setupCanvas();
-      this.draw();
-    });
+    window.addEventListener('resize', this.resizeHandler);
   }
+
+  /** 检测是否处于竖屏强制横屏旋转模式 */
+  private readonly _portraitMQ = window.matchMedia('(max-width: 768px) and (orientation: portrait)');
 
   private getCoordFromClientXY(clientX: number, clientY: number): HexCoord {
     const rect = this.canvas.getBoundingClientRect();
-    const mx = clientX - rect.left - this.offsetX;
-    const my = clientY - rect.top - this.offsetY;
+
+    let mx: number;
+    let my: number;
+
+    if (this._portraitMQ.matches) {
+      // CSS 对 #app 施加了 rotate(90deg) (顺时针)
+      // 屏幕坐标 → 画布内部坐标:
+      //   画布 X = (clientY - rect.top) / rect.height * 画布逻辑宽
+      //   画布 Y = (1 - (clientX - rect.left) / rect.width) * 画布逻辑高
+      const w = this.canvas.width / (window.devicePixelRatio || 1);
+      const h = this.canvas.height / (window.devicePixelRatio || 1);
+      const fx = (clientY - rect.top) / rect.height;
+      const fy = 1 - (clientX - rect.left) / rect.width;
+      mx = fx * w - this.offsetX;
+      my = fy * h - this.offsetY;
+    } else {
+      mx = clientX - rect.left - this.offsetX;
+      my = clientY - rect.top - this.offsetY;
+    }
+
     return pixelToHex(mx, my, this.hexSize);
   }
 
@@ -139,16 +175,22 @@ export class HexRenderer {
   }
 
   draw(): void {
+    this.ensureInit();
     const { ctx } = this;
     const w = this.canvas.width / (window.devicePixelRatio || 1);
     const h = this.canvas.height / (window.devicePixelRatio || 1);
     ctx.clearRect(0, 0, w, h);
 
-    // 绘制棋盘区域底色渐变，与外部背景区分
+    // 读取主题色
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const bgColors = isDark
+      ? ['#1a2a3a', '#121e2b', '#0f1923']
+      : ['#e8e0d0', '#ddd5c2', '#d5ccb8'];
+
     const grad = ctx.createRadialGradient(this.offsetX, this.offsetY, 0, this.offsetX, this.offsetY, this.hexSize * 10);
-    grad.addColorStop(0, '#1a2a3a');
-    grad.addColorStop(0.7, '#121e2b');
-    grad.addColorStop(1, '#0f1923');
+    grad.addColorStop(0, bgColors[0]);
+    grad.addColorStop(0.7, bgColors[1]);
+    grad.addColorStop(1, bgColors[2]);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
@@ -187,9 +229,10 @@ export class HexRenderer {
     }
     ctx.closePath();
 
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+
     // ---- 未解锁 ----
     if (!tile.unlocked) {
-      // 检查是否可以金币解锁（有已解锁邻居）
       const state = this.engine.getState();
       const neighbors = hexNeighbors(tile.coord);
       const hasUnlockedNeighbor = neighbors.some(n => {
@@ -197,24 +240,29 @@ export class HexRenderer {
         return nt && nt.unlocked;
       });
 
-      ctx.fillStyle = hasUnlockedNeighbor ? '#1e3348' : '#15222e';
+      ctx.fillStyle = hasUnlockedNeighbor
+        ? (isDark ? '#1e3348' : '#c8d8e8')
+        : (isDark ? '#15222e' : '#d5d0c8');
       ctx.fill();
-      ctx.strokeStyle = hasUnlockedNeighbor ? '#3a6580' : '#2a3d52';
+      ctx.strokeStyle = hasUnlockedNeighbor
+        ? (isDark ? '#3a6580' : '#8aaccf')
+        : (isDark ? '#2a3d52' : '#b0a898');
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      ctx.fillStyle = hasUnlockedNeighbor ? '#6aafcf' : '#405060';
+      ctx.fillStyle = hasUnlockedNeighbor
+        ? (isDark ? '#6aafcf' : '#4888b0')
+        : (isDark ? '#405060' : '#a09888');
       ctx.font = `${Math.round(hs * 0.33)}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('🔒', cx, cy - hs * 0.1);
 
-      // 显示解锁费用
       if (hasUnlockedNeighbor) {
         const cost = this.engine.getHexUnlockCost(tile.coord);
         if (cost < Infinity) {
           ctx.font = `${Math.max(8, Math.round(hs * 0.22))}px sans-serif`;
-          ctx.fillStyle = '#8ac0e0';
+          ctx.fillStyle = isDark ? '#8ac0e0' : '#3070a0';
           ctx.fillText(`${cost}🪙`, cx, cy + hs * 0.25);
         }
       }
@@ -223,14 +271,14 @@ export class HexRenderer {
 
     // ---- 空地 ----
     if (!tile.terrain) {
-      ctx.fillStyle = '#1e3045';
+      ctx.fillStyle = isDark ? '#1e3045' : '#d8d0c0';
       ctx.fill();
-      ctx.strokeStyle = '#3a6890';
+      ctx.strokeStyle = isDark ? '#3a6890' : '#a0b8d0';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 4]);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = '#5a8ab0';
+      ctx.fillStyle = isDark ? '#5a8ab0' : '#6080a0';
       ctx.font = `${Math.round(hs * 0.42)}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -290,8 +338,8 @@ export class HexRenderer {
       }
     }
 
-    // 产出概要（只对工作中的地块显示，含道具加成）
-    if (tile.isWorked) {
+    // 产出概要（只对工作中的地块显示）
+    if (tile.isWorked && this.yieldLabelsVisible) {
       const yields = this.engine.getTileEffectiveYields(tile.coord);
       const yieldText = this.formatYieldCompact(yields);
       if (yieldText) {
@@ -301,7 +349,7 @@ export class HexRenderer {
         ctx.textBaseline = 'middle';
         const metrics = ctx.measureText(yieldText);
         const tw = metrics.width + 6;
-        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillStyle = isDark ? 'rgba(0,0,0,0.65)' : 'rgba(0,0,0,0.55)';
         ctx.fillRect(cx - tw / 2, cy + hs * 0.19, tw, yieldFontSize + 4);
         ctx.fillStyle = '#ffffff';
         ctx.fillText(yieldText, cx, cy + hs * 0.19 + (yieldFontSize + 4) / 2);
@@ -411,5 +459,27 @@ export class HexRenderer {
     const g = Math.min(255, Math.round(parseInt(color.slice(3, 5), 16) + (255 - parseInt(color.slice(3, 5), 16)) * amount));
     const b = Math.min(255, Math.round(parseInt(color.slice(5, 7), 16) + (255 - parseInt(color.slice(5, 7), 16)) * amount));
     return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  }
+
+  // ---- IHexRenderer 接口方法 ----
+
+  toggleYieldLabels(): void {
+    this.yieldLabelsVisible = !this.yieldLabelsVisible;
+    this.draw();
+  }
+
+  getYieldLabelsVisible(): boolean {
+    return this.yieldLabelsVisible;
+  }
+
+  applyThemeColors(): void {
+    this.setupCanvas();
+    this.draw();
+  }
+
+  dispose(): void {
+    window.removeEventListener('resize', this.resizeHandler);
+    this.onHexClick = null;
+    this.onHexHover = null;
   }
 }

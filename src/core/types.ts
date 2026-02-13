@@ -48,7 +48,7 @@ export interface IFeature {
 
 // ============ 资源 ============
 
-export type ResourceCategory = 'bonus' | 'luxury' | 'knowledge';
+export type ResourceCategory = 'bonus' | 'luxury' | 'strategic' | 'knowledge';
 
 export interface IResource {
   id: string;
@@ -150,56 +150,107 @@ export interface IShopCard {
   resource?: IResource;
 }
 
-// ============ 道具系统 ============
+// ============ 科技树系统 ============
 
-export type ItemPool = 'gold' | 'culture' | 'faith';
+export type TechTreeId = 'science' | 'policy' | 'faith';
 
-export interface IItemEffect {
-  type:
-  | 'flat_per_turn' | 'per_tag' | 'yield_percent' | 'instant' | 'pop_growth'
-  | 'terrain_alias' | 'convert_yield' | 'per_adjacent_pair';
-  /** flat_per_turn / per_tag / instant / per_adjacent_pair: 产出加成 */
+export type TechEffectType =
+  | 'buff_improvement'
+  | 'buff_district'
+  | 'buff_terrain'
+  | 'buff_feature'
+  | 'buff_all_improvements'
+  | 'add_adjacency'
+  | 'modify_adjacency'
+  | 'terrain_alias'
+  | 'make_workable'
+  | 'unlock_improvement'
+  | 'unlock_district'
+  | 'reduce_cost'
+  | 'pattern_bonus';
+
+export interface ITechEffect {
+  type: TechEffectType;
+  /** buff_improvement/buff_district: target building ID */
+  target?: string;
+  /** buff_terrain: target terrain ID */
+  targetTerrain?: string;
+  /** buff_feature/terrain_alias: target tag */
+  targetTag?: string;
+  /** buff yields to add */
   yields?: Partial<IYields>;
-  /** per_tag / per_adjacent_pair: 主匹配 tag */
+  /** add_adjacency: the new adjacency rule */
+  adjacencyRule?: IAdjacencyRule;
+  /** modify_adjacency: matchTag of the rule to modify */
   matchTag?: string;
-  /** yield_percent: 目标 yield */
-  yieldKey?: keyof IYields;
-  /** yield_percent: 百分比增幅 (8 = +8%, 叠乘) */
-  percent?: number;
-  /** per_tag / per_adjacent_pair: 即使地块未分配工人也生效 */
-  ignoreWorked?: boolean;
-  /** terrain_alias: 源地形 tag */
-  fromTag?: string;
-  /** terrain_alias: 视为此 tag (扩展匹配) */
-  toTag?: string;
-  /** per_adjacent_pair: 邻居需匹配的 tag */
-  secondTag?: string;
-  /** convert_yield: 来源 yield */
-  fromYieldKey?: keyof IYields;
-  /** convert_yield: 目标 yield */
-  toYieldKey?: keyof IYields;
-  /** convert_yield: 转化比例 (0~1, 如 0.2 = 20%) */
-  convertRatio?: number;
+  /** modify_adjacency: new mode */
+  newMode?: AdjacencyMode;
+  /** terrain_alias: tag to add to the terrain */
+  addTag?: string;
+  /** make_workable: yields when terrain becomes workable */
+  workableYields?: IYields;
+  /** unlock_improvement/unlock_district: ID to unlock */
+  unlockId?: string;
+  /** reduce_cost: category ('improvement_upgrade'|'district_build'|'all_build') */
+  costCategory?: string;
+  /** reduce_cost: percentage reduction (0-100) */
+  costReduction?: number;
+  /** pattern_bonus: pattern description key */
+  patternId?: string;
+  /** pattern_bonus: minimum count for pattern */
+  patternMinCount?: number;
+  /** pattern_bonus: match tag for pattern */
+  patternMatchTag?: string;
 }
 
-export interface IItemDef {
+export interface ITechNode {
+  /** Unique ID like 'S-A', 'S-AA', 'P-BBB' etc. */
   id: string;
+  /** Display name */
+  name: string;
+  /** Description of the effect */
+  description: string;
+  /** Which tree this belongs to */
+  tree: TechTreeId;
+  /** Layer (1-4) */
+  layer: number;
+  /** Parent node ID (null for L1 nodes) */
+  parentId: string | null;
+  /** The effect(s) when this node is selected */
+  effects: ITechEffect[];
+}
+
+export interface ITechTree {
+  id: TechTreeId;
   name: string;
   icon: string;
-  description: string;
-  pool: ItemPool;
-  rarity: 1 | 2 | 3;
-  effects: IItemEffect[];
+  /** Resource used for unlocking: 'science'|'culture'|'faith' */
+  resource: keyof IYields;
+  /** Thresholds for each layer [L1, L2, L3, L4] */
+  thresholds: [number, number, number, number];
+  /** All nodes in this tree */
+  nodes: ITechNode[];
 }
 
 export interface IEurekaDef {
   id: string;
-  /** 在第几回合检查 */
-  checkTurn: number;
-  /** 奖励的商店池 */
-  pool: ItemPool;
-  /** 条件描述（UI展示） */
+  /** Condition description (for UI) */
   description: string;
+  /** Which tree this eureka affects */
+  targetTree: TechTreeId;
+  /** Which layer threshold to reduce */
+  targetLayer: number;
+  /** Reduction percentage (0-100) e.g. 30 = reduce threshold by 30% */
+  reductionPercent: number;
+}
+
+export interface ITechState {
+  /** Selected node IDs per tree */
+  selectedNodes: Record<TechTreeId, string[]>;
+  /** Triggered eureka IDs */
+  triggeredEurekas: string[];
+  /** Current effective thresholds (after eureka reductions) */
+  effectiveThresholds: Record<TechTreeId, [number, number, number, number]>;
 }
 
 // ============ 游戏状态 ============
@@ -211,43 +262,36 @@ export interface IGameState {
   maxTurns: number;
   phase: GamePhase;
 
-  // 存储资源（可花费的）
+  // 可花费资源
   storedGold: number;
   storedProduction: number;
-  /** 科技：可花费（升级商店），剩余计入终分 */
-  storedScience: number;
 
-  // 累积得分（只增不减）
+  // 累积资源（只增不减，用于科技树解锁 + 终局得分）
+  accumulatedScience: number;
   accumulatedCulture: number;
   accumulatedFaith: number;
 
-  // 每回合产出（快照，用于UI展示）
+  // 每回合产出快照
   perTurnYields: IYields;
 
-  // 人口系统
+  // 人口
   population: number;
   foodProgress: number;
   perTurnNetFood: number;
 
-  // 商店等级
-  shopLevel: number;
-
   // 商店
+  shopLevel: number;
   shopCards: IShopCard[];
   shopCardLocks: boolean[];
   selectedCard: IShopCard | null;
+  rerollsThisTurn: number;
 
   // 棋盘
   board: Map<string, ITile>;
-
-  // 已通过人口解锁的外圈格子数
   unlockedOuterCount: number;
 
-  // 道具系统
-  items: IItemDef[];
-  eurekaTriggered: string[];
-  /** 可用的免费道具商店入场券 [pool名称] */
-  freeItemShopEntries: ItemPool[];
+  // 科技树
+  techState: ITechState;
 }
 
 // ============ 卡牌模板（用于卡池定义，仅地块） ============
@@ -286,6 +330,4 @@ export interface IShopLevelConfig {
   level: number;
   /** [tier1%, tier2%, tier3%] 概率权重 */
   tierWeights: [number, number, number];
-  /** 升级到此等级的科技费用（level 1 为 0） */
-  upgradeCost: number;
 }

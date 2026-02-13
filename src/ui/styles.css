@@ -6,7 +6,37 @@
   box-sizing: border-box;
 }
 
-:root {
+/* 浅色主题 (默认) */
+:root,
+[data-theme="light"] {
+  --bg-primary: #f5f0e0;
+  --bg-secondary: #ebe5d0;
+  --bg-tertiary: #ddd6be;
+  --bg-card: #e8e0c8;
+  --bg-card-hover: #dfd6b8;
+  --border-color: #c5b898;
+  --text-primary: #3a3020;
+  --text-secondary: #6a5d45;
+  --text-muted: #998a6a;
+  --accent-gold: #c09020;
+  --accent-green: #3a8a28;
+  --accent-blue: #2878b8;
+  --accent-purple: #8838a0;
+  --accent-orange: #c05a10;
+  --accent-red: #c03030;
+  --overlay-bg: rgba(60, 50, 30, 0.7);
+  --shadow-color: rgba(0, 0, 0, 0.15);
+  --progress-track: rgba(0, 0, 0, 0.1);
+  --lock-btn-bg: rgba(255, 255, 255, 0.6);
+  /* 3D 场景颜色 */
+  --scene-bg: #f0ead0;
+  --scene-hex-adj: #d8d0b0;
+  --scene-hex-empty: #c8c0a0;
+  --scene-hex-default: #d0c8a8;
+}
+
+/* 深色主题 */
+[data-theme="dark"] {
   --bg-primary: #0f1923;
   --bg-secondary: #1a2634;
   --bg-tertiary: #243447;
@@ -22,6 +52,15 @@
   --accent-purple: #c060d0;
   --accent-orange: #e07020;
   --accent-red: #e04040;
+  --overlay-bg: rgba(0, 0, 0, 0.75);
+  --shadow-color: rgba(0, 0, 0, 0.5);
+  --progress-track: rgba(255, 255, 255, 0.1);
+  --lock-btn-bg: rgba(0, 0, 0, 0.5);
+  /* 3D 场景颜色 */
+  --scene-bg: #0f1923;
+  --scene-hex-adj: #1e3348;
+  --scene-hex-empty: #151e2a;
+  --scene-hex-default: #1e3045;
 }
 
 body {
@@ -108,7 +147,7 @@ body {
 .goal-progress-bar {
   width: 100%;
   height: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--progress-track);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -136,7 +175,8 @@ body {
   position: relative;
 }
 
-#board-canvas {
+#board-canvas,
+#board-canvas-2d {
   cursor: pointer;
 }
 
@@ -487,6 +527,115 @@ body {
   border-color: var(--border-color);
 }
 
+/* ============ 新手引导叠加层 ============ */
+
+#tutorial-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--overlay-bg);
+  z-index: 200; /* 在所有其他层之上 */
+  align-items: center;
+  justify-content: center;
+}
+
+#tutorial-overlay.visible {
+  display: flex;
+}
+
+#tutorial-content {
+  background: var(--bg-secondary);
+  border: 2px solid var(--accent-gold);
+  border-radius: 16px;
+  padding: 28px 32px;
+  min-width: 340px;
+  max-width: 520px;
+  max-height: 85vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+#tutorial-content h2 {
+  font-size: 22px;
+  color: var(--accent-gold);
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.tutorial-step {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border-radius: 10px;
+  border-left: 4px solid var(--accent-gold);
+}
+
+.tutorial-step h3 {
+  font-size: 15px;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tutorial-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-gold);
+  color: #fff;
+  font-size: 13px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+[data-theme="light"] .tutorial-step-num {
+  color: #fff;
+}
+
+.tutorial-step p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.tutorial-tip {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  #tutorial-content {
+    min-width: unset;
+    width: 92vw;
+    max-width: 420px;
+    padding: 20px 16px;
+  }
+  #tutorial-content h2 {
+    font-size: 18px;
+  }
+  .tutorial-step h3 {
+    font-size: 14px;
+  }
+  .tutorial-step p {
+    font-size: 12px;
+  }
+}
+
 /* ============ 游戏结束叠加层 ============ */
 
 #game-over-overlay {
@@ -496,7 +645,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--overlay-bg);
   z-index: 100;
   align-items: center;
   justify-content: center;
@@ -586,7 +735,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--overlay-bg);
   z-index: 100;
   align-items: center;
   justify-content: center;
@@ -706,7 +855,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--overlay-bg);
   z-index: 100;
   align-items: center;
   justify-content: center;
@@ -816,8 +965,14 @@ body {
 /* ============ 移动端适配 ============ */
 
 /* Canvas 禁止触摸滚动 */
-#board-canvas {
+#board-canvas,
+#board-canvas-2d {
   touch-action: none;
+}
+
+/* 面板滚动优化 */
+.side-panel {
+  overscroll-behavior: contain; /* 防止滚动穿透到父层 */
 }
 
 @media (max-width: 768px) {
@@ -911,6 +1066,8 @@ body {
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    touch-action: pan-y; /* 明确允许纵向滚动手势 */
+    overscroll-behavior: contain; /* 防止滚动穿透 */
   }
 
   /* 面板折叠切换 - 移动端可见 */
@@ -1113,6 +1270,16 @@ body {
   opacity: 0.7;
 }
 
+.theme-toggle-btn {
+  bottom: 12px;
+  left: 54px; /* 在收益按钮右侧 */
+}
+
+.render-mode-btn {
+  bottom: 12px;
+  left: 96px; /* 在主题按钮右侧 */
+}
+
 /* ============ 商店卡牌锁定 ============ */
 
 .shop-card-wrapper {
@@ -1123,7 +1290,7 @@ body {
   position: absolute;
   top: 4px;
   right: 4px;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--lock-btn-bg);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   color: var(--text-muted);
@@ -1140,74 +1307,11 @@ body {
   background: rgba(240, 192, 64, 0.15);
 }
 
-/* ============ 道具商店入口面板 ============ */
+/* ============ 科技树入口面板 ============ */
 
-#item-shop-panel {
-  padding: 12px;
+#tech-entry-panel {
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border-color);
-}
-
-#item-shop-panel h3 {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-bottom: 8px;
-}
-
-#item-shop-entries {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.item-shop-entry-btn {
-  flex: 1;
-  min-width: 70px;
-  padding: 6px 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-  text-align: center;
-  transition: all 0.15s ease;
-  font-family: inherit;
-}
-
-.item-shop-entry-btn:hover:not(:disabled) {
-  background: var(--bg-card-hover);
-  border-color: var(--accent-blue);
-}
-
-.item-shop-entry-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.item-shop-entry-btn .entry-pool {
-  font-weight: bold;
-  display: block;
-}
-
-.item-shop-entry-btn .entry-cost {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.item-shop-entry-btn.has-free {
-  border-color: var(--accent-green);
-  box-shadow: 0 0 6px rgba(96, 192, 64, 0.3);
-}
-
-.item-shop-entry-btn.has-free .entry-cost {
-  color: var(--accent-green);
-}
-
-/* 尤里卡徽章 */
-#eureka-badges {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--text-muted);
 }
 
 .eureka-badge {
@@ -1278,101 +1382,162 @@ body {
   white-space: nowrap;
   z-index: 10;
   color: var(--text-primary);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 8px var(--shadow-color);
   margin-bottom: 4px;
 }
 
-/* ============ 道具商店叠加层 ============ */
+/* ============ 科技树叠加层 ============ */
 
-#item-shop-overlay {
+#tech-tree-overlay {
   display: none;
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--overlay-bg);
   z-index: 100;
   align-items: center;
   justify-content: center;
 }
 
-#item-shop-overlay.visible {
+#tech-tree-overlay.visible {
   display: flex;
 }
 
-#item-shop-content {
+#tech-tree-content {
   background: var(--bg-secondary);
-  border: 2px solid var(--accent-purple);
+  border: 2px solid var(--accent-blue);
   border-radius: 16px;
-  padding: 28px 32px;
-  min-width: 340px;
-  max-width: 560px;
+  padding: 24px 28px;
+  min-width: 380px;
+  max-width: 640px;
+  width: 90vw;
   max-height: 85vh;
   overflow-y: auto;
-  text-align: center;
-}
-
-#item-shop-title {
-  font-size: 22px;
-  color: var(--accent-gold);
-  margin-bottom: 16px;
-}
-
-#item-shop-offerings {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 16px 0;
-}
-
-.item-offering-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 12px 16px;
-  background: var(--bg-card);
-  border: 2px solid var(--border-color);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.2s ease;
   text-align: left;
 }
 
-.item-offering-card:hover {
-  background: var(--bg-card-hover);
-  border-color: var(--accent-purple);
-  box-shadow: 0 0 12px rgba(192, 96, 208, 0.2);
+#tech-tree-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.item-offering-header {
+.tech-tree-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.tech-tree-header {
+  font-size: 15px;
+  font-weight: bold;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.tech-node {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  margin-bottom: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  border-radius: 6px;
+  font-size: 13px;
 }
 
-.item-offering-icon {
-  font-size: 24px;
+.tech-node.selected {
+  background: rgba(72, 199, 142, 0.12);
+  border: 1px solid var(--accent-green);
 }
 
-.item-offering-name {
-  font-size: 16px;
+.tech-node.locked {
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border-color);
+  color: var(--text-muted);
+}
+
+.tech-node-layer {
   font-weight: bold;
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 24px;
+}
+
+.tech-node-name {
+  font-weight: 600;
   color: var(--text-primary);
 }
 
-.item-offering-rarity {
-  margin-left: auto;
+.tech-node-desc {
   font-size: 11px;
-  letter-spacing: 2px;
+  color: var(--text-secondary);
+  margin-left: auto;
 }
 
-.item-offering-desc {
+.tech-node-threshold {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.tech-node-choices {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  margin: 4px 0;
+  flex-wrap: wrap;
+}
+
+.tech-node-btn {
+  padding: 6px 14px;
+  border: 2px solid var(--accent-blue);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--accent-blue);
   font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tech-node-btn:hover {
+  background: var(--accent-blue);
+  color: #fff;
+  box-shadow: 0 0 8px rgba(66, 133, 244, 0.3);
+}
+
+/* 尤里卡徽章 */
+#eureka-badges {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eureka-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 6px;
+  font-size: 11px;
   color: var(--text-secondary);
-  line-height: 1.5;
+}
+
+.eureka-badge.completed {
+  background: rgba(72, 199, 142, 0.1);
+  border-color: rgba(72, 199, 142, 0.3);
+  color: var(--accent-green);
+}
+
+.eureka-badge-icon {
+  font-size: 14px;
 }
 
 /* 解锁格子按钮 */
@@ -1412,13 +1577,7 @@ body {
     font-size: 11px;
   }
 
-  .item-shop-entry-btn {
-    min-width: 60px;
-    font-size: 11px;
-    padding: 4px 6px;
-  }
-
-  #item-shop-content {
+  #tech-tree-content {
     min-width: unset;
     width: 92vw;
     padding: 20px 16px;
@@ -1464,6 +1623,11 @@ body {
     border-top: none !important;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    /*
+     * 竖屏旋转后浏览器原生手势方向与逻辑滚动方向不匹配，
+     * 禁用原生触摸手势，由 JS (setupRotatedScroll) 接管滚动。
+     */
+    touch-action: none;
   }
 
   #left-panel {
@@ -1506,34 +1670,79 @@ body {
     min-width: unset !important;
     flex-shrink: unset !important;
   }
+
+  /*
+   * 叠加层在 #app 内部，#app 已 rotate(90deg)。
+   * 由于 transform 的存在，position:fixed 表现为 position:absolute (相对 #app)。
+   * 只需确保它们正确填满旋转后的 #app 容器即可，不需要额外旋转。
+   *
+   * 注意：旋转后逻辑宽度=物理高度(svh)，逻辑高度=物理宽度(vw)。
+   * 但 vh/vw 单位仍按物理方向计算，所以内部面板的 max-height/width
+   * 必须用百分比（相对 #app）而非 vh/vw。
+   */
+  #settings-overlay,
+  #rules-overlay,
+  #game-over-overlay,
+  #tech-tree-overlay,
+  #tutorial-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  #tutorial-content {
+    max-height: 85% !important;
+    max-width: 90% !important;
+    width: auto !important;
+    min-width: unset !important;
+    touch-action: none; /* JS 接管滚动 */
+  }
+
+  /* 内容面板：使用百分比代替 vh/vw，适配旋转后的容器 */
+  #settings-content {
+    max-height: 85% !important;
+    max-width: 90% !important;
+    width: auto !important;
+    min-width: unset !important;
+    touch-action: none;
+  }
+
+  #rules-content {
+    max-height: 85% !important;
+    max-width: 90% !important;
+    width: auto !important;
+    min-width: 320px !important;
+    touch-action: none;
+  }
+
+  #game-over-content {
+    max-height: 85% !important;
+    max-width: 90% !important;
+    min-width: unset !important;
+    touch-action: none;
+  }
+
+  #tech-tree-content {
+    max-height: 85% !important;
+    max-width: 90% !important;
+    width: auto !important;
+    min-width: unset !important;
+    touch-action: none;
+  }
 }
 
-/* Mobile item shop overlay */
+/* Mobile tech tree overlay */
 @media (max-width: 768px) {
-  #item-shop-content {
+  #tech-tree-content {
     min-width: unset;
     width: 92vw;
     max-width: 420px;
     padding: 20px 16px;
   }
 
-  #item-shop-title {
-    font-size: 18px;
-  }
-
-  .item-offering-name {
-    font-size: 14px;
-  }
-
-  .item-offering-desc {
-    font-size: 12px;
-  }
-
-  #item-shop-panel {
-    padding: 8px;
-  }
-
-  #item-inventory-panel {
+  #tech-entry-panel {
     padding: 8px;
   }
 }

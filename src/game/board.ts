@@ -5,9 +5,10 @@
  */
 
 import { hexDistance, hexKey, hexNeighbors, hexRing } from '../core/hex';
-import type { HexCoord, IAdjacencyRule, ITile, IYields } from '../core/types';
+import type { AdjacencyMode, HexCoord, IAdjacencyRule, ITile, IYields } from '../core/types';
 import { addYields, emptyYields, scaleYields, totalYieldValue } from '../core/yields';
 import { CITY_CENTER } from '../data/terrains';
+import type { ITechEffectCache } from './tech-engine';
 
 /** 最大环数 */
 export const MAX_RING = 4;
@@ -152,11 +153,17 @@ export function tileHasTagWithAliases(
 /** 计算单条邻接规则的加成 */
 export function calculateAdjacencyBonus(
   rule: IAdjacencyRule,
-  neighbors: ITile[]
+  neighbors: ITile[],
+  modeOverride?: AdjacencyMode,
+  techCache?: ITechEffectCache,
 ): IYields {
-  const matchCount = neighbors.filter(n => tileHasTag(n, rule.matchTag)).length;
+  const mode = modeOverride || rule.mode;
+  // 如果有科技缓存，使用带别名的标签匹配
+  const matchCount = techCache
+    ? neighbors.filter(n => tileHasTagWithCache(n, rule.matchTag, techCache)).length
+    : neighbors.filter(n => tileHasTag(n, rule.matchTag)).length;
 
-  switch (rule.mode) {
+  switch (mode) {
     case 'per_each':
       return scaleYields(rule.bonus, matchCount);
     case 'per_two':
@@ -166,25 +173,86 @@ export function calculateAdjacencyBonus(
   }
 }
 
-/** 计算单个地块的总产出（含邻接），不考虑是否工作 */
+/** 检查地块是否有某个 tag（考虑 terrain_alias） */
+function tileHasTagWithCache(tile: ITile, tag: string, cache: ITechEffectCache): boolean {
+  if (tileHasTag(tile, tag)) return true;
+  if (tile.terrain) {
+    const addedTags = cache.terrainAliases.get(tile.terrain.id);
+    if (addedTags && addedTags.includes(tag)) return true;
+  }
+  return false;
+}
+
+/** 计算单个地块的总产出（含邻接+科技树效果），不考虑是否工作 */
 export function calculateTileYields(
   board: Map<string, ITile>,
-  coord: HexCoord
+  coord: HexCoord,
+  techCache?: ITechEffectCache,
 ): IYields {
   const tile = getTile(board, coord);
   if (!tile || !tile.terrain) return emptyYields();
 
+  // make_workable: 不可建造地形的基础产出可能被科技树替换
+  let isWorkable = true;
+  let baseTerrainYields = { ...tile.terrain.baseYields };
+  if (!tile.terrain.buildable && tile.terrain.id !== 'city_center') {
+    if (techCache) {
+      const workableYields = techCache.workableTerrains.get(tile.terrain.id);
+      if (workableYields) {
+        baseTerrainYields = { ...workableYields };
+      } else {
+        isWorkable = false;
+      }
+    } else {
+      // 无科技缓存时，lake 等自带产出的保持
+      if (tile.terrain.tags.includes('water') && tile.terrain.id === 'lake') {
+        // lake is workable by default
+      } else if (tile.terrain.baseYields.gold === 0 && tile.terrain.baseYields.food === 0 &&
+        tile.terrain.baseYields.production === 0 && tile.terrain.baseYields.science === 0 &&
+        tile.terrain.baseYields.culture === 0 && tile.terrain.baseYields.faith === 0) {
+        isWorkable = false;
+      }
+    }
+  }
+
   // 1. 地形基础产出
-  let yields = { ...tile.terrain.baseYields };
+  let yields = baseTerrainYields;
+
+  // 1b. 科技树地形加成
+  if (techCache) {
+    const terrainBuff = techCache.terrainBuffs.get(tile.terrain.id);
+    if (terrainBuff) yields = addYields(yields, terrainBuff);
+  }
 
   // 2. 地貌修正
   if (tile.feature) {
     yields = addYields(yields, tile.feature.yieldModifier);
+
+    // 2b. 科技树地貌加成 (匹配 feature 的任意 tag)
+    if (techCache) {
+      for (const tag of tile.feature.tags) {
+        const featureBuff = techCache.featureBuffs.get(tag);
+        if (featureBuff) yields = addYields(yields, featureBuff);
+      }
+    }
   }
 
   // 3. 资源加成
   if (tile.resource) {
     yields = addYields(yields, tile.resource.yieldBonus);
+
+    // 3b. 科技树资源标签加成 (如 luxury_resource 的 buff)
+    if (techCache) {
+      for (const tag of tile.resource.tags) {
+        const resourceBuff = techCache.featureBuffs.get(tag);
+        if (resourceBuff) yields = addYields(yields, resourceBuff);
+      }
+    }
+  }
+
+  // 如果地形不可工作且未被科技树解锁，只返回基础（不含建筑）
+  if (!isWorkable && !tile.improvement && !tile.district) {
+    return yields;
   }
 
   // 获取邻居（用于邻接计算）
@@ -194,21 +262,51 @@ export function calculateTileYields(
   if (tile.improvement) {
     yields = addYields(yields, tile.improvement.yields);
 
-    // 升级加成 (递减边际): Lv2 → +4, Lv3 → +6, Lv4 → +8, ...
+    // 科技树改良加成
+    if (techCache) {
+      const impBuff = techCache.improvementBuffs.get(tile.improvement.id);
+      if (impBuff) yields = addYields(yields, impBuff);
+      // 全局改良加成
+      yields = addYields(yields, techCache.allImprovementBuff);
+    }
+
+    // 升级加成 (递减边际)
     if (tile.improvementLevel > 1) {
       const bonus = emptyYields();
       bonus[tile.improvement.upgradePrimaryYield] = upgradeYieldBonus(tile.improvementLevel);
       yields = addYields(yields, bonus);
     }
 
+    // 原有邻接规则（可能被科技树修改模式）
     for (const rule of tile.improvement.adjacencyRules) {
-      yields = addYields(yields, calculateAdjacencyBonus(rule, neighbors));
+      const modeKey = `${tile.improvement.id}:${rule.matchTag}`;
+      const overrideMode = techCache?.modifiedAdjacency.get(modeKey);
+      yields = addYields(yields, calculateAdjacencyBonus(rule, neighbors, overrideMode, techCache));
+    }
+
+    // 科技树新增邻接规则
+    if (techCache) {
+      const extraRules = techCache.additionalAdjacency.get(tile.improvement.id);
+      if (extraRules) {
+        for (const rule of extraRules) {
+          yields = addYields(yields, calculateAdjacencyBonus(rule, neighbors, undefined, techCache));
+        }
+      }
     }
   }
 
   // 5. 区域产出 + 邻接 + 区域升级加成
   if (tile.district) {
     yields = addYields(yields, tile.district.baseYields);
+
+    // 科技树区域加成
+    if (techCache) {
+      const distBuff = techCache.districtBuffs.get(tile.district.id);
+      if (distBuff) yields = addYields(yields, distBuff);
+      // '__all__' 全区域加成
+      const allDistBuff = techCache.districtBuffs.get('__all__');
+      if (allDistBuff) yields = addYields(yields, allDistBuff);
+    }
 
     // 区域升级加成 (递减边际)
     if (tile.districtLevel > 1 && tile.district.upgradePrimaryYield) {
@@ -217,8 +315,50 @@ export function calculateTileYields(
       yields = addYields(yields, bonus);
     }
 
+    // 原有邻接规则（可能被修改）
     for (const rule of tile.district.adjacencyRules) {
-      yields = addYields(yields, calculateAdjacencyBonus(rule, neighbors));
+      const modeKey = `${tile.district.id}:${rule.matchTag}`;
+      const overrideMode = techCache?.modifiedAdjacency.get(modeKey);
+      yields = addYields(yields, calculateAdjacencyBonus(rule, neighbors, overrideMode, techCache));
+    }
+
+    // 科技树新增邻接规则
+    if (techCache) {
+      const extraRules = techCache.additionalAdjacency.get(tile.district.id);
+      if (extraRules) {
+        for (const rule of extraRules) {
+          yields = addYields(yields, calculateAdjacencyBonus(rule, neighbors, undefined, techCache));
+        }
+      }
+    }
+  }
+
+  // 6. 图案奖励
+  if (techCache && techCache.patternBonuses.length > 0) {
+    // Import dynamically to avoid circular deps - inline implementation
+    for (const pattern of techCache.patternBonuses) {
+      if (pattern.patternId === 'surrounded_by' && pattern.target && pattern.patternMatchTag && pattern.patternMinCount) {
+        const buildingId = tile.improvement?.id || tile.district?.id;
+        if (buildingId !== pattern.target) continue;
+        const matchCount = neighbors.filter(n =>
+          tileHasTagWithCache(n, pattern.patternMatchTag!, techCache),
+        ).length;
+        if (matchCount >= pattern.patternMinCount) {
+          yields = addYields(yields, pattern.yields);
+        }
+      }
+      if (pattern.patternId === 'complete_ring') {
+        const center: HexCoord = { q: 0, r: 0 };
+        for (let ring = 1; ring <= MAX_RING; ring++) {
+          const ringCoords = hexRing(center, ring);
+          if (tile.ring === ring && ringCoords.every(c => {
+            const t = getTile(board, c);
+            return t && t.terrain !== null;
+          })) {
+            yields = addYields(yields, pattern.yields);
+          }
+        }
+      }
     }
   }
 
@@ -226,11 +366,14 @@ export function calculateTileYields(
 }
 
 /** 计算棋盘所有 **工作中** 地块的总产出 */
-export function calculateTotalYields(board: Map<string, ITile>): IYields {
+export function calculateTotalYields(
+  board: Map<string, ITile>,
+  techCache?: ITechEffectCache,
+): IYields {
   let total = emptyYields();
   for (const [, tile] of board) {
     if (tile.terrain && tile.isWorked) {
-      total = addYields(total, calculateTileYields(board, tile.coord));
+      total = addYields(total, calculateTileYields(board, tile.coord, techCache));
     }
   }
   return total;

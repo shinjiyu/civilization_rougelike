@@ -19,6 +19,13 @@ const TERRAIN_MODELS: Record<string, string> = {
   tundra: 'stone.glb',
   mountain: 'stone-mountain.glb',
   lake: 'water.glb',
+  coast: 'water.glb',
+  ocean: 'water.glb',
+  volcanic: 'stone-rocks.glb',
+  savanna: 'dirt.glb',
+  snow: 'stone.glb',
+  river_valley: 'grass.glb',
+  plateau: 'stone-hill.glb',
 };
 
 // ---- 地形 + 地物组合 → 模型 (优先使用) ----
@@ -51,6 +58,27 @@ const TERRAIN_FEATURE_MODELS: Record<string, Record<string, string>> = {
     marsh: 'water-rocks.glb',
     oasis: 'water-island.glb',
   },
+  coast: {
+    reef: 'water-rocks.glb',
+    cliff: 'water-rocks.glb',
+  },
+  volcanic: {
+    geothermal: 'stone-rocks.glb',
+    volcanic_soil: 'stone-hill.glb',
+  },
+  savanna: {
+    hills: 'dirt-hill.glb',
+    forest: 'grass-forest.glb',
+    rainforest: 'grass-forest.glb',
+  },
+  river_valley: {
+    river: 'water-island.glb',
+    floodplain: 'grass-hill.glb',
+  },
+  plateau: {
+    geothermal: 'stone-rocks.glb',
+    cliff: 'stone-hill.glb',
+  },
 };
 
 // ---- 改良设施 → 模型 (完整六角 + 建筑) ----
@@ -62,6 +90,18 @@ const IMPROVEMENT_MODELS: Record<string, string> = {
   plantation: 'building-sheep.glb',
   solar_farm: 'building-watermill.glb',
   hunting_ground: 'building-archery.glb',
+  // V2 new improvements (临时使用现有模型占位)
+  fishery: 'building-port.glb',
+  quarry: 'building-mine.glb',
+  lighthouse: 'building-tower.glb',
+  terrace: 'building-farm.glb',
+  observatory: 'building-wizard-tower.glb',
+  monastery: 'building-tower.glb',
+  hot_spring: 'building-watermill.glb',
+  sacred_grove: 'building-archery.glb',
+  windmill: 'building-mill.glb',
+  vineyard: 'building-sheep.glb',
+  bazaar: 'building-market.glb',
 };
 
 // ---- 区域 → 模型 (完整六角 + 建筑) ----
@@ -71,6 +111,14 @@ const DISTRICT_MODELS: Record<string, string> = {
   holy_site: 'building-tower.glb',
   theater_square: 'building-village.glb',
   industrial_zone: 'building-smelter.glb',
+  // V2 new districts (临时使用现有模型占位)
+  harbor: 'building-port.glb',
+  aqueduct: 'building-watermill.glb',
+  barracks: 'building-archery.glb',
+  entertainment: 'building-village.glb',
+  government_plaza: 'building-castle.glb',
+  monastery_district: 'building-tower.glb',
+  university: 'building-wizard-tower.glb',
 };
 
 /**

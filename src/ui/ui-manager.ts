@@ -4,17 +4,20 @@
  * 与 Canvas 渲染器协作
  */
 
-import type { IGameConfig } from '../core/config';
-import { CONFIG_META, DEFAULT_CONFIG, loadConfig, resetConfig, saveConfig, VICTORY_GOAL_PRESETS } from '../core/config';
-import type { HexCoord, IAdjacencyRule, IShopCard, ItemPool, IYields } from '../core/types';
+import type { IChallengeData, IGameConfig } from '../core/config';
+import { buildChallengeURL, CONFIG_META, DEFAULT_CONFIG, loadConfig, resetConfig, saveConfig, VICTORY_GOAL_PRESETS } from '../core/config';
+import type { HexCoord, IAdjacencyRule, IShopCard, IYields, TechTreeId } from '../core/types';
 import { addYields, emptyYields, yieldColor, yieldIcon, yieldsToString } from '../core/yields';
 import { DISTRICT_REGISTRY } from '../data/districts';
 import { IMPROVEMENT_REGISTRY } from '../data/improvements';
-import { EUREKA_DEFS } from '../data/items';
+import { ALL_TECH_TREES, EUREKA_DEFS, TECH_TREE_MAP } from '../data/tech-trees';
 import { calculateAdjacencyBonus, getNeighborTiles, tileHasTag, upgradeMarginalYield } from '../game/board';
 import { GameEngine } from '../game/engine';
+import { HexRenderer } from './hex-renderer';
+import type { HexRenderer3D } from './hex-renderer-3d';
+import type { ModelManager } from './model-manager';
 /** 渲染器接口 - 2D和3D渲染器都实现此接口 */
-interface IHexRenderer {
+export interface IHexRenderer {
   onHexClick: ((coord: HexCoord) => void) | null;
   onHexHover: ((coord: HexCoord | null) => void) | null;
   setValidPlacements(coords: HexCoord[]): void;
@@ -23,11 +26,14 @@ interface IHexRenderer {
   draw(): void;
   toggleYieldLabels(): void;
   getYieldLabelsVisible(): boolean;
+  applyThemeColors(): void;
+  dispose(): void;
 }
 
 export class UIManager {
   private engine: GameEngine;
   private renderer: IHexRenderer;
+  private models: ModelManager | null = null;
 
   private hudTurn!: HTMLElement;
   private hudYields!: HTMLElement;
@@ -52,6 +58,24 @@ export class UIManager {
   /** 是否为移动端布局 */
   private isMobile = false;
   private mobileQuery: MediaQueryList;
+  /** 挑战模式：发起者名称 (非空表示正在挑战) */
+  private challengeFrom: string | null = null;
+  /** 当前渲染模式 */
+  private renderMode: '2d' | '3d' = '3d';
+  /** 缓存 3D 渲染器实例 (切换时保留，避免重建) */
+  private renderer3D: HexRenderer3D | null = null;
+  /** 缓存 2D 渲染器实例 */
+  private renderer2D: HexRenderer | null = null;
+
+  /** 设置挑战模式 (从外部调用) */
+  setChallengeFrom(name: string): void {
+    this.challengeFrom = name;
+  }
+
+  /** 供 main.ts 传入 ModelManager，用于创建 3D 渲染器 */
+  setModelManager(models: ModelManager): void {
+    this.models = models;
+  }
 
   constructor(engine: GameEngine, renderer: IHexRenderer) {
     this.engine = engine;
@@ -61,7 +85,6 @@ export class UIManager {
     this.mobileQuery.addEventListener('change', (e) => {
       this.isMobile = e.matches;
       if (!this.isMobile) {
-        // 桌面端恢复两个面板都展开
         document.getElementById('left-panel')?.classList.remove('collapsed');
         document.getElementById('right-panel')?.classList.remove('collapsed');
       }
@@ -72,9 +95,12 @@ export class UIManager {
     this.bindEngineEvents();
     this.bindInfoPanelActions();
     this.bindSettingsActions();
-    this.bindItemShopActions();
     this.bindPanelToggles();
     this.createYieldToggleButton();
+    this.createThemeToggleButton();
+    this.createRenderModeToggle();
+    this.applyStoredTheme();
+    this.showTutorialIfFirstVisit();
   }
 
   private cacheElements(): void {
@@ -126,6 +152,15 @@ export class UIManager {
     });
     document.getElementById('btn-close-rules')!.addEventListener('click', () => {
       document.getElementById('rules-overlay')!.classList.remove('visible');
+    });
+
+    // 科技树弹窗
+    document.getElementById('btn-open-tech')!.addEventListener('click', () => {
+      this.updateTechTreePanel();
+      document.getElementById('tech-tree-overlay')!.classList.add('visible');
+    });
+    document.getElementById('btn-close-tech-tree')!.addEventListener('click', () => {
+      document.getElementById('tech-tree-overlay')!.classList.remove('visible');
     });
 
     document.getElementById('btn-settings')!.addEventListener('click', () => {
@@ -264,63 +299,6 @@ export class UIManager {
     }
   }
 
-  // -------- 道具商店 --------
-
-  private bindItemShopActions(): void {
-    // 道具商店入口按钮（事件委托）
-    document.getElementById('item-shop-entries')!.addEventListener('click', (e: Event) => {
-      const target = e.target as HTMLElement;
-      const btn = target.closest('.item-shop-entry-btn') as HTMLElement | null;
-      if (!btn || btn.hasAttribute('disabled')) return;
-      const pool = btn.dataset.pool as ItemPool;
-      this.openItemShop(pool);
-    });
-
-    // 关闭道具商店
-    document.getElementById('btn-close-item-shop')!.addEventListener('click', () => {
-      document.getElementById('item-shop-overlay')!.classList.remove('visible');
-    });
-  }
-
-  private openItemShop(pool: ItemPool): void {
-    const offerings = this.engine.enterItemShop(pool);
-    if (!offerings) {
-      this.showToast('资源不足');
-      return;
-    }
-
-    const poolNames: Record<ItemPool, string> = { gold: '🪙 金币', culture: '🎭 文化', faith: '🙏 信仰' };
-    const title = document.getElementById('item-shop-title')!;
-    title.textContent = `🎁 ${poolNames[pool]}道具商店`;
-
-    const container = document.getElementById('item-shop-offerings')!;
-    container.innerHTML = '';
-
-    for (const item of offerings) {
-      const rarityStars = '★'.repeat(item.rarity);
-      const rarityColor = item.rarity === 3 ? 'var(--accent-purple)' : item.rarity === 2 ? 'var(--accent-blue)' : 'var(--text-muted)';
-
-      const card = document.createElement('div');
-      card.className = 'item-offering-card';
-      card.innerHTML = `
-        <div class="item-offering-header">
-          <span class="item-offering-icon">${item.icon}</span>
-          <span class="item-offering-name">${item.name}</span>
-          <span class="item-offering-rarity" style="color:${rarityColor}">${rarityStars}</span>
-        </div>
-        <div class="item-offering-desc">${item.description}</div>
-      `;
-      card.addEventListener('click', () => {
-        this.engine.claimItem(item);
-        document.getElementById('item-shop-overlay')!.classList.remove('visible');
-        this.showToast(`获得道具「${item.name}」！`);
-      });
-      container.appendChild(card);
-    }
-
-    document.getElementById('item-shop-overlay')!.classList.add('visible');
-  }
-
   // -------- 面板折叠 --------
 
   private bindPanelToggles(): void {
@@ -366,53 +344,296 @@ export class UIManager {
     container.appendChild(btn);
   }
 
-  private updateItemShopPanel(): void {
-    const state = this.engine.getState();
-    const entries = document.getElementById('item-shop-entries')!;
-    const config = this.engine.getConfig();
+  // -------- 主题切换 --------
 
-    const pools: { pool: ItemPool; icon: string; name: string; cost: number; currency: string }[] = [
-      { pool: 'gold', icon: '🪙', name: '金币池', cost: config.itemShopGoldCost, currency: '🪙' },
-      { pool: 'culture', icon: '🎭', name: '文化池', cost: config.itemShopCultureCost, currency: '🎭' },
-      { pool: 'faith', icon: '🙏', name: '信仰池', cost: config.itemShopFaithCost, currency: '🙏' },
-    ];
+  private applyStoredTheme(): void {
+    const stored = localStorage.getItem('civ-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', stored);
+    // 3D 场景颜色在 constructor 后已设好，首次不需重绘
+  }
 
-    entries.innerHTML = '';
-    for (const p of pools) {
-      const canEnter = this.engine.canEnterItemShop(p.pool);
-      const hasFree = state.freeItemShopEntries.includes(p.pool);
-      const btn = document.createElement('button');
-      btn.className = `item-shop-entry-btn${hasFree ? ' has-free' : ''}`;
-      btn.dataset.pool = p.pool;
-      if (!canEnter || state.phase === 'game_over') btn.setAttribute('disabled', '');
-      btn.innerHTML = `
-        <span class="entry-pool">${p.icon} ${p.name}</span>
-        <span class="entry-cost">${hasFree ? '🎫 免费券' : `${p.cost}${p.currency}`}</span>
-      `;
-      entries.appendChild(btn);
-    }
+  private createThemeToggleButton(): void {
+    const container = document.getElementById('board-container')!;
+    const btn = document.createElement('button');
+    btn.id = 'btn-toggle-theme';
+    btn.className = 'yield-toggle-btn theme-toggle-btn';
+    btn.title = '切换深色/浅色主题';
+    const isDark = (localStorage.getItem('civ-theme') || 'light') === 'dark';
+    btn.textContent = isDark ? '☀️' : '🌙';
+    btn.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('civ-theme', next);
+      btn.textContent = next === 'dark' ? '☀️' : '🌙';
+      btn.title = next === 'dark' ? '切换浅色主题' : '切换深色主题';
+      this.renderer.applyThemeColors();
+    });
+    container.appendChild(btn);
+  }
 
-    // 尤里卡徽章
-    const eurekaBadges = document.getElementById('eureka-badges')!;
-    const badgesHtml: string[] = [];
-    for (const eureka of EUREKA_DEFS) {
-      const triggered = state.eurekaTriggered.includes(eureka.id);
-      const cls = triggered ? 'triggered' : 'pending';
-      badgesHtml.push(`<span class="eureka-badge ${cls}" title="${eureka.description}">${triggered ? '✅' : '⏳'} T${eureka.checkTurn}</span>`);
-    }
-    eurekaBadges.innerHTML = badgesHtml.length > 0 ? `<span style="font-size:10px;color:var(--text-muted)">尤里卡: </span>${badgesHtml.join('')}` : '';
+  // -------- 2D/3D 切换 --------
 
-    // 道具背包
-    const invPanel = document.getElementById('item-inventory-panel')!;
-    const invContainer = document.getElementById('item-inventory')!;
-    if (state.items.length > 0) {
-      invPanel.style.display = '';
-      invContainer.innerHTML = state.items.map(item =>
-        `<span class="inventory-item" title="${item.description}">${item.icon} ${item.name}<span class="inventory-tooltip">${item.description}</span></span>`
-      ).join('');
+  private createRenderModeToggle(): void {
+    const container = document.getElementById('board-container')!;
+    const btn = document.createElement('button');
+    btn.id = 'btn-toggle-render-mode';
+    btn.className = 'yield-toggle-btn render-mode-btn';
+    btn.textContent = '2D';
+    btn.title = '切换到 2D 渲染';
+    btn.addEventListener('click', () => {
+      const next = this.renderMode === '3d' ? '2d' : '3d';
+      this.switchRenderMode(next);
+      btn.textContent = next === '3d' ? '2D' : '3D';
+      btn.title = next === '3d' ? '切换到 2D 渲染' : '切换到 3D 渲染';
+    });
+    container.appendChild(btn);
+  }
+
+  private switchRenderMode(mode: '2d' | '3d'): void {
+    if (mode === this.renderMode) return;
+
+    const canvas3d = document.getElementById('board-canvas') as HTMLCanvasElement;
+    const canvas2d = document.getElementById('board-canvas-2d') as HTMLCanvasElement;
+
+    // Save current state
+    const selectedCoord = this.selectedTileCoord;
+
+    if (mode === '2d') {
+      // Switch to 2D
+      canvas3d.style.display = 'none';
+      canvas2d.style.display = 'block';
+
+      if (!this.renderer2D) {
+        this.renderer2D = new HexRenderer(canvas2d, this.engine);
+      }
+
+      // Cache 3D renderer reference (keep it alive for switching back)
+      if (!this.renderer3D && this.renderer !== this.renderer2D) {
+        this.renderer3D = this.renderer as HexRenderer3D;
+      }
+
+      this.renderer = this.renderer2D;
     } else {
-      invPanel.style.display = 'none';
+      // Switch to 3D
+      canvas2d.style.display = 'none';
+      canvas3d.style.display = 'block';
+
+      if (this.renderer3D) {
+        this.renderer = this.renderer3D;
+      }
+      // If no cached 3D renderer (shouldn't happen since we start in 3D)
     }
+
+    this.renderMode = mode;
+
+    // Re-bind renderer callbacks
+    this.bindRendererCallbacks();
+
+    // Restore state
+    if (selectedCoord) {
+      this.renderer.setSelectedHex(selectedCoord);
+    }
+
+    // Apply theme and redraw
+    this.renderer.applyThemeColors();
+    this.renderer.draw();
+
+    this.showToast(mode === '2d' ? '已切换到 2D 模式' : '已切换到 3D 模式');
+  }
+
+  // -------- 新手引导 --------
+
+  private showTutorialIfFirstVisit(): void {
+    const key = 'civ-tutorial-shown';
+    if (localStorage.getItem(key)) return;
+
+    const overlay = document.getElementById('tutorial-overlay')!;
+    const content = document.getElementById('tutorial-content')!;
+
+    const goalPreset = this.engine.getGoalPreset();
+    const goalProgress = this.engine.getGoalProgress();
+
+    content.innerHTML = `
+      <h2>🎮 欢迎来到文明精铺</h2>
+
+      <div class="tutorial-step">
+        <h3><span class="tutorial-step-num">1</span> 游戏目标</h3>
+        <p>在 <strong>${this.engine.getState().maxTurns} 回合</strong>内完成胜利目标：<br>
+        ${goalPreset.icon} <strong>${goalPreset.name}</strong> — ${goalPreset.description}<br>
+        目标值：<strong>${goalProgress.target}</strong>（可在设置中切换不同目标）</p>
+      </div>
+
+      <div class="tutorial-step">
+        <h3><span class="tutorial-step-num">2</span> 购买与放置地块</h3>
+        <p>每回合左侧 <strong>🏪 商店</strong> 会刷新地块卡牌。<br>
+        用 🪙金币 购买后，<strong>点击棋盘上高亮的空格</strong> 放置。<br>
+        放置后地块开始产出资源。🌾食物养人口，⚙️生产力造建筑。</p>
+      </div>
+
+      <div class="tutorial-step">
+        <h3><span class="tutorial-step-num">3</span> 建造改良与区域</h3>
+        <p>点击已放置的地块，在右侧 <strong>🔧 改良区</strong> 可花费 ⚙️ 建造改良设施或区域，提升产出。<br>
+        不同地形适合不同建筑，注意 <strong>邻接加成</strong>！</p>
+      </div>
+
+      <div class="tutorial-step">
+        <h3><span class="tutorial-step-num">4</span> 科技树</h3>
+        <p>左侧 <strong>🌳 科技树</strong> 消耗 🔬科技/🎭文化/🙏信仰累积值解锁节点。<br>
+        每棵树4层，每层选择不同科技获得改良、区域、加成等。<br>
+        达成特定条件会触发 <strong>🔮 尤里卡</strong>，降低解锁阈值！</p>
+      </div>
+
+      <div class="tutorial-tip">
+        💡 提示：合理分配 👥人口 工作地块、利用邻接加成和道具组合是高分关键。<br>
+        点击底部「📖 规则」可随时查看完整说明。
+      </div>
+
+      <button class="action-btn primary" id="btn-close-tutorial"
+        style="margin-top:16px;width:100%;font-size:16px;padding:10px 0">
+        知道了，开始游戏！
+      </button>
+    `;
+
+    overlay.classList.add('visible');
+
+    document.getElementById('btn-close-tutorial')!.addEventListener('click', () => {
+      overlay.classList.remove('visible');
+      localStorage.setItem(key, '1');
+    });
+  }
+
+  private updateTechTreePanel(): void {
+    const state = this.engine.getState();
+    const techPanel = document.getElementById('tech-tree-panel');
+    if (!techPanel) return;
+
+    let html = '';
+    for (const tree of ALL_TECH_TREES) {
+      const treeId = tree.id as TechTreeId;
+      const accumulated = this.engine.getAccumulatedForTree(treeId);
+      const maxSelected = this.engine.getTreeMaxSelectedLayer(treeId);
+      const thresholds = state.techState.effectiveThresholds[treeId];
+
+      html += `<div class="tech-tree-section">`;
+      html += `<div class="tech-tree-header">${tree.icon} ${tree.name} <span style="color:var(--text-muted);font-size:11px">(累计 ${accumulated})</span></div>`;
+
+      // Show layers 1-4
+      for (let layer = 1; layer <= 4; layer++) {
+        const threshold = thresholds[layer - 1];
+        const isUnlocked = accumulated >= threshold;
+        const selected = state.techState.selectedNodes[treeId];
+
+        // Get nodes for this layer that are children of selected parent
+        const layerNodes = TECH_TREE_MAP[treeId].nodes.filter(n => n.layer === layer);
+
+        // Find selected node for this layer
+        const selectedNode = layerNodes.find(n => selected.includes(n.id));
+
+        // Find selectable nodes
+        const selectableNodes = this.engine.getTreeSelectableNodes(treeId, layer);
+
+        if (selectedNode) {
+          // Already selected - show as completed
+          html += `<div class="tech-node selected" title="${selectedNode.description}">
+            <span class="tech-node-layer">L${layer}</span>
+            <span class="tech-node-name">✅ ${selectedNode.name}</span>
+            <span class="tech-node-desc">${selectedNode.description}</span>
+          </div>`;
+        } else if (selectableNodes.length > 0 && isUnlocked) {
+          // Can select - show options
+          html += `<div class="tech-node-choices">`;
+          html += `<span class="tech-node-layer">L${layer}</span>`;
+          for (const node of selectableNodes) {
+            html += `<button class="tech-node-btn selectable" data-tree="${treeId}" data-node="${node.id}" title="${node.description}">
+              ${node.name}
+            </button>`;
+          }
+          html += `</div>`;
+        } else if (layer <= maxSelected + 1) {
+          // Show as locked with threshold
+          html += `<div class="tech-node locked">
+            <span class="tech-node-layer">L${layer}</span>
+            <span class="tech-node-threshold">🔒 ${threshold}</span>
+          </div>`;
+        }
+        // Deeper layers: hidden
+      }
+
+      html += `</div>`;
+    }
+
+    techPanel.innerHTML = html;
+
+    // Bind click events for selectable nodes
+    techPanel.querySelectorAll('.tech-node-btn.selectable').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const treeId = (btn as HTMLElement).dataset.tree as TechTreeId;
+        const nodeId = (btn as HTMLElement).dataset.node!;
+        if (this.engine.selectTechNode(nodeId, treeId)) {
+          this.showToast(`科技解锁！`);
+          // Refresh the panel to reflect the new selection
+          this.updateTechTreePanel();
+          this.updateEurekaBadges();
+          this.updateHUD();
+          this.updateShop();
+          this.renderer.draw();
+        }
+      });
+    });
+  }
+
+  /** 更新科技树入口按钮 (显示可选节点数) */
+  private updateTechEntryButton(): void {
+    const btn = document.getElementById('btn-open-tech');
+    if (!btn) return;
+
+    let selectableCount = 0;
+    const state = this.engine.getState();
+    for (const tree of ALL_TECH_TREES) {
+      const treeId = tree.id as TechTreeId;
+      const accumulated = this.engine.getAccumulatedForTree(treeId);
+      const thresholds = state.techState.effectiveThresholds[treeId];
+      for (let layer = 1; layer <= 4; layer++) {
+        const nodes = this.engine.getTreeSelectableNodes(treeId, layer);
+        if (nodes.length > 0 && accumulated >= thresholds[layer - 1]) {
+          selectableCount++;
+        }
+      }
+    }
+
+    if (selectableCount > 0) {
+      btn.textContent = `🔬 科技树 (${selectableCount}可选)`;
+      btn.style.borderColor = 'var(--accent-green)';
+      btn.style.color = 'var(--accent-green)';
+    } else {
+      btn.textContent = '🔬 科技树';
+      btn.style.borderColor = '';
+      btn.style.color = '';
+    }
+  }
+
+  /** 更新尤里卡徽章 (左面板内) */
+  private updateEurekaBadges(): void {
+    const badgesEl = document.getElementById('eureka-badges');
+    if (!badgesEl) return;
+
+    const state = this.engine.getState();
+    let html = '';
+
+    for (const eureka of EUREKA_DEFS) {
+      const triggered = state.techState.triggeredEurekas?.includes(eureka.id);
+      const cls = triggered ? 'eureka-badge completed' : 'eureka-badge';
+      const icon = triggered ? '✅' : '⚡';
+      const treeNames: Record<string, string> = { science: '科技', policy: '政策', faith: '信仰' };
+      const target = treeNames[eureka.targetTree] || eureka.targetTree;
+      html += `<div class="${cls}">
+        <span class="eureka-badge-icon">${icon}</span>
+        <span>${eureka.description} → ${target} L${eureka.targetLayer} -${eureka.reductionPercent}%</span>
+      </div>`;
+    }
+
+    badgesEl.innerHTML = html;
   }
 
   // -------- 设置面板 --------
@@ -467,19 +688,19 @@ export class UIManager {
         <li>每回合开始自动结算产出、人口增减</li>
         <li>商店刷新地块卡牌（锁定的卡保留）</li>
         <li>自动检查尤里卡时刻触发</li>
-        <li>可随时建造改良/区域、进入道具商店</li>
+        <li>可随时建造改良/区域、选择科技树节点</li>
         <li>点击「结束回合」进入下一回合</li>
       </ul>
 
       <h3>💰 六种产出</h3>
       <table class="rules-table">
         <tr><th>产出</th><th>用途</th><th>计分</th></tr>
-        <tr><td>🪙 金币</td><td>购买地块、刷新商店、解锁格子、道具门票</td><td>❌</td></tr>
+        <tr><td>🪙 金币</td><td>购买地块、刷新商店、解锁格子</td><td>❌</td></tr>
         <tr><td>🌾 食物</td><td>人口增长（净食物累积达阈值→+1人口）</td><td>❌</td></tr>
         <tr><td>⚙️ 生产力</td><td>建造改良/区域/升级</td><td>❌</td></tr>
-        <tr><td>🔬 科技</td><td>升级商店等级（花费），剩余计入得分</td><td>✅</td></tr>
-        <tr><td>🎭 文化</td><td>道具商店门票 + 累积得分</td><td>✅</td></tr>
-        <tr><td>🙏 信仰</td><td>道具商店门票 + 累积得分</td><td>✅</td></tr>
+        <tr><td>🔬 科技</td><td>科技树解锁 + 升级商店等级，剩余计入得分</td><td>✅</td></tr>
+        <tr><td>🎭 文化</td><td>政策树解锁 + 累积得分</td><td>✅</td></tr>
+        <tr><td>🙏 信仰</td><td>信仰树解锁 + 累积得分</td><td>✅</td></tr>
       </table>
 
       <h3>🗺️ 地图系统</h3>
@@ -527,21 +748,16 @@ export class UIManager {
         ${adjRows.join('')}
       </table>
 
-      <h3>🎁 道具系统</h3>
+      <h3>🌳 科技树系统</h3>
       <ul>
-        <li>支付门票（🪙/🎭/🙏）进入对应池的道具商店</li>
-        <li>每次从池中随机展示${this.engine.getConfig().itemShopOfferingCount}个道具，选择1个获得</li>
-        <li>道具提供持续加成（每回合加成/百分比提升等）</li>
-        <li>持有数量无上限，随时可进入商店</li>
-        <li>部分道具有即时效果（如立即获得资源、+1人口）</li>
+        <li>三种科技树：🔬 科技、🎭 政策、🙏 信仰，分别消耗对应产出</li>
+        <li>每棵树4层，每层需累积达到阈值才能解锁</li>
+        <li>每层可选择不同节点，解锁改良、区域、加成等</li>
+        <li>选择后不可更改，需规划解锁路径</li>
       </ul>
 
       <h3>⚡ 尤里卡时刻</h3>
-      <p>达到特定里程碑可获得免费道具商店入场券：</p>
-      <table class="rules-table">
-        <tr><th>条件</th><th>奖励</th></tr>
-        ${EUREKA_DEFS.map(e => `<tr><td>${e.description}</td><td>免费${e.pool === 'gold' ? '🪙' : e.pool === 'culture' ? '🎭' : '🙏'}商店</td></tr>`).join('')}
-      </table>
+      <p>达到特定里程碑可降低科技树解锁阈值，加快进度。</p>
 
       <h3>💡 出售地块</h3>
       <p>选中地块后可出售，返还已投入金币和生产力的一定比例。</p>
@@ -570,7 +786,7 @@ export class UIManager {
     // ---- 胜利目标区域 ----
     const goalSection = document.createElement('div');
     goalSection.className = 'settings-goal-section';
-    goalSection.style.cssText = 'grid-column:1/-1;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:rgba(255,255,255,0.04)';
+    goalSection.style.cssText = 'grid-column:1/-1;border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--bg-card)';
 
     const goalTitle = document.createElement('div');
     goalTitle.style.cssText = 'font-weight:bold;font-size:14px;margin-bottom:8px;color:var(--accent-gold,#f0c040)';
@@ -588,7 +804,7 @@ export class UIManager {
 
     const goalSelect = document.createElement('select');
     goalSelect.id = 'cfg-victoryGoalType';
-    goalSelect.style.cssText = 'padding:6px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.2);background:var(--bg-secondary,#2a2a2a);color:var(--text-primary,#eee);font-size:13px';
+    goalSelect.style.cssText = 'padding:6px 8px;border-radius:4px;border:1px solid var(--border-color);background:var(--bg-tertiary);color:var(--text-primary);font-size:13px';
     for (const preset of VICTORY_GOAL_PRESETS) {
       const opt = document.createElement('option');
       opt.value = preset.type;
@@ -796,7 +1012,12 @@ export class UIManager {
   updateAll(): void {
     this.updateHUD();
     this.updateShop();
-    this.updateItemShopPanel();
+    this.updateTechEntryButton();
+    this.updateEurekaBadges();
+    // If tech tree overlay is open, refresh it live
+    if (document.getElementById('tech-tree-overlay')?.classList.contains('visible')) {
+      this.updateTechTreePanel();
+    }
     if (this.selectedTileCoord) {
       this.updateTileInfo(this.selectedTileCoord);
     }
@@ -809,14 +1030,18 @@ export class UIManager {
     const available = this.engine.getAvailableWorkers();
     const threshold = this.engine.getGrowthThreshold();
 
+    const challengeBanner = this.challengeFrom
+      ? `<div style="font-size:11px;color:var(--accent-orange);font-weight:bold;white-space:nowrap">⚔️ 挑战 ${this.challengeFrom}</div>`
+      : '';
+
     this.hudTurn.innerHTML = `
+      ${challengeBanner}
       <div>回合 ${state.turn}/${state.maxTurns}</div>
       <div style="font-size:13px;color:var(--text-secondary)">
         👥 人口 ${state.population}
         <span style="color:${available > 0 ? 'var(--accent-green)' : 'var(--text-muted)'}">
           (${available > 0 ? available + ' 空闲' : '已满'})
         </span>
-        ${state.items.length > 0 ? `<span style="color:var(--accent-purple);margin-left:4px">📦${state.items.length}</span>` : ''}
       </div>
     `;
 
@@ -833,7 +1058,7 @@ export class UIManager {
         <span class="yield-per-turn">(${netFoodStr}/t)</span>
       </div>
       ${this.yieldHtml('production', state.storedProduction, yields.production)}
-      ${this.yieldHtml('science', state.storedScience, yields.science)}
+      ${this.yieldHtml('science', state.accumulatedScience, yields.science)}
       ${this.yieldHtml('culture', state.accumulatedCulture, yields.culture)}
       ${this.yieldHtml('faith', state.accumulatedFaith, yields.faith)}
     `;
@@ -859,8 +1084,10 @@ export class UIManager {
 
     const rerollBtn = document.getElementById('btn-reroll') as HTMLButtonElement;
     if (rerollBtn) {
-      rerollBtn.disabled = state.storedGold < this.engine.getRerollCost() || state.phase === 'game_over';
-      rerollBtn.textContent = `刷新 ${this.engine.getRerollCost()}🪙`;
+      const remaining = this.engine.getRemainingRerolls();
+      const canReroll = state.storedGold >= this.engine.getRerollCost() && remaining > 0 && state.phase !== 'game_over';
+      rerollBtn.disabled = !canReroll;
+      rerollBtn.textContent = `刷新 ${this.engine.getRerollCost()}🪙 (${remaining})`;
     }
     const endTurnBtn = document.getElementById('btn-end-turn') as HTMLButtonElement;
     if (endTurnBtn) {
@@ -889,7 +1116,7 @@ export class UIManager {
     const upgradeCost = this.engine.getShopUpgradeCost();
     let upgradeHtml = '';
     if (upgradeCost !== null) {
-      const canUpgrade = state.storedScience >= upgradeCost;
+      const canUpgrade = state.accumulatedScience >= upgradeCost;
       upgradeHtml = `<button id="btn-upgrade-shop" class="shop-upgrade-btn" ${canUpgrade ? '' : 'disabled'}>升级 ${upgradeCost}🔬</button>`;
     } else {
       upgradeHtml = '<span style="color:var(--accent-gold);font-size:11px">MAX</span>';
@@ -1041,34 +1268,13 @@ export class UIManager {
     }
 
     // ---- 产出 ----
-    const itemBonus = this.engine.getItemBonusForTile(coord);
-    const hasItemBonus = Object.values(itemBonus).some(v => v !== 0);
-    const effectiveYields = hasItemBonus ? addYields(yields, itemBonus) : yields;
-
     html += `<div class="info-section">`;
-    if (hasItemBonus && tile.isWorked) {
-      html += `
-        <div class="info-row">
-          <span class="info-label">基础产出</span>
-          <span class="info-value">${yieldsToString(yields)}</span>
-        </div>
-        <div class="info-row" style="color:var(--accent-purple)">
-          <span class="info-label">📦 道具加成</span>
-          <span class="info-value">+${yieldsToString(itemBonus)}</span>
-        </div>
-        <div class="info-row" style="font-weight:bold">
-          <span class="info-label">总产出</span>
-          <span class="info-value">${yieldsToString(effectiveYields)}</span>
-        </div>
-      `;
-    } else {
-      html += `
-        <div class="info-row">
-          <span class="info-label">${tile.isWorked ? '产出' : '潜在产出'}</span>
-          <span class="info-value">${yieldsToString(yields)}</span>
-        </div>
-      `;
-    }
+    html += `
+      <div class="info-row">
+        <span class="info-label">${tile.isWorked ? '产出' : '潜在产出'}</span>
+        <span class="info-value">${yieldsToString(yields)}</span>
+      </div>
+    `;
     html += `</div>`;
 
     // ---- 邻接加成 ----
@@ -1322,7 +1528,14 @@ export class UIManager {
     const goalPreset = this.engine.getGoalPreset();
     const isVictory = goal.achieved;
 
+    const challengeHeader = this.challengeFrom
+      ? `<div style="font-size:14px;color:var(--accent-orange);margin-bottom:8px">
+          ⚔️ 挑战自 <strong>${this.challengeFrom}</strong>
+        </div>`
+      : '';
+
     this.gameOverContent.innerHTML = `
+      ${challengeHeader}
       <h2 style="color:${isVictory ? 'var(--accent-green)' : 'var(--accent-red, #e05050)'}">
         ${isVictory ? '🎉 胜利！' : '😔 未达成目标'}
       </h2>
@@ -1343,22 +1556,108 @@ export class UIManager {
       <div class="score-breakdown">
         <div class="score-row"><span>👥 最终人口</span><span>${state.population}</span></div>
         <div class="score-row"><span>🏪 商店等级</span><span>Lv.${state.shopLevel}</span></div>
-        <div class="score-row"><span>📦 道具</span><span>${state.items.length}个</span></div>
         <div class="score-row"><span>🔬 科技（剩余）</span><span>${score.science}</span></div>
         <div class="score-row"><span>🎭 文化</span><span>${score.culture}</span></div>
         <div class="score-row"><span>🙏 信仰</span><span>${score.faith}</span></div>
         <div class="score-row total"><span>总得分</span><span>${score.total}</span></div>
       </div>
-      <button class="action-btn primary" id="btn-restart" style="font-size:16px;padding:10px 32px;">再来一局</button>
+      <div class="challenge-share-section" style="
+        margin-top:16px;padding:12px;border-radius:10px;
+        background:var(--bg-card);border:1px solid var(--border-color);
+        text-align:left;
+      ">
+        <div style="font-size:14px;font-weight:bold;color:var(--accent-gold);margin-bottom:8px;text-align:center">
+          🎯 发起挑战
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;text-align:center">
+          以你的 ${goalPreset.name} <strong>${goal.current}</strong> 为目标，邀请好友来挑战！
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="challenge-username" placeholder="输入你的昵称"
+            maxlength="16"
+            style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-color);
+              background:var(--bg-tertiary);color:var(--text-primary);font-size:13px;font-family:inherit;
+              min-width:0"
+          />
+          <button class="action-btn primary" id="btn-gen-challenge"
+            style="white-space:nowrap;font-size:13px;padding:6px 14px">
+            生成链接
+          </button>
+        </div>
+        <div id="challenge-link-result" style="display:none;margin-top:8px">
+          <input type="text" id="challenge-link-url" readonly
+            style="width:100%;padding:6px 10px;border-radius:6px;border:1px solid var(--accent-gold);
+              background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;font-family:inherit"
+          />
+          <button class="action-btn" id="btn-copy-challenge"
+            style="width:100%;margin-top:6px;font-size:12px;padding:5px 0">
+            📋 复制链接
+          </button>
+        </div>
+      </div>
+      <button class="action-btn primary" id="btn-restart" style="font-size:16px;padding:10px 32px;margin-top:12px">再来一局</button>
     `;
+
+    // 生成挑战链接
+    document.getElementById('btn-gen-challenge')?.addEventListener('click', () => {
+      const nameInput = document.getElementById('challenge-username') as HTMLInputElement;
+      const username = nameInput.value.trim();
+      if (!username) {
+        nameInput.style.borderColor = 'var(--accent-red)';
+        nameInput.focus();
+        return;
+      }
+      nameInput.style.borderColor = '';
+
+      const config = this.engine.getConfig();
+      const challengeData: IChallengeData = {
+        from: username,
+        score: goal.current,
+        goalType: goal.type,
+        config: { ...config },
+      };
+      const url = buildChallengeURL(challengeData);
+
+      const resultDiv = document.getElementById('challenge-link-result')!;
+      const urlInput = document.getElementById('challenge-link-url') as HTMLInputElement;
+      urlInput.value = url;
+      resultDiv.style.display = 'block';
+
+      // 保存昵称方便下次使用
+      localStorage.setItem('civ-username', username);
+    });
+
+    // 复制链接
+    document.getElementById('btn-copy-challenge')?.addEventListener('click', () => {
+      const urlInput = document.getElementById('challenge-link-url') as HTMLInputElement;
+      urlInput.select();
+      navigator.clipboard.writeText(urlInput.value).then(() => {
+        this.showToast('挑战链接已复制！');
+      }).catch(() => {
+        // fallback
+        document.execCommand('copy');
+        this.showToast('挑战链接已复制！');
+      });
+    });
+
+    // 回填上次使用的昵称
+    const savedName = localStorage.getItem('civ-username');
+    if (savedName) {
+      (document.getElementById('challenge-username') as HTMLInputElement).value = savedName;
+    }
 
     document.getElementById('btn-restart')?.addEventListener('click', () => {
       this.selectedTileCoord = null;
       this.pendingConfirm = null;
       this.renderer.setSelectedHex(null);
       GameEngine.clearSave();
-      const config = loadConfig();
-      this.engine.startNewGame(config);
+      // 挑战模式下重开仍用挑战配置，普通模式用用户配置
+      if (this.challengeFrom) {
+        this.engine.startNewGame();
+      } else {
+        const config = loadConfig();
+        this.engine.startNewGame(config);
+      }
       this.gameOverOverlay.classList.remove('visible');
     });
 

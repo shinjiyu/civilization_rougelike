@@ -19,6 +19,13 @@ import { getModelForTile } from './model-mapping';
 // ---- 常量 ----
 const HEX_SIZE = 1.0;               // 网格间距使用的半径
 const HEX_INNER = HEX_SIZE * 0.95;  // 程序化六角格的绘制半径
+
+/** 读取 CSS 变量中的颜色，转为 0xRRGGBB 数值 */
+function cssColorToHex(varName: string, fallback: string): number {
+  const style = getComputedStyle(document.documentElement);
+  const val = style.getPropertyValue(varName).trim() || fallback;
+  return parseInt(val.replace('#', ''), 16);
+}
 /** 参考模型名 (用于测量 Kenney 模型实际尺寸) */
 const REFERENCE_MODEL = 'grass.glb';
 /** 出现动画时长 (ms) */
@@ -79,6 +86,10 @@ export class HexRenderer3D {
   private readonly YIELD_BASE_SCALE = new THREE.Vector3(1.4, 0.3, 1);
   /** 临时向量 (避免每帧 alloc) */
   private readonly _tmpVec = new THREE.Vector3();
+  /** 装饰星 sprite 列表 (避免每帧 scene.traverse) */
+  private starSprites: THREE.Sprite[] = [];
+  /** 移动端标记 */
+  private readonly isMobile: boolean;
 
   /** 选中地块 shader 高亮: 存储被替换前的原始材质 */
   private selectedShaderKey: string | null = null;
@@ -94,12 +105,25 @@ export class HexRenderer3D {
     this.container = canvas.parentElement!;
     this.hexShape = this.makeHexShape(HEX_INNER);
 
-    // Renderer
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x0f1923);
+    // 移动端检测 (影响渲染质量设置)
+    this.isMobile =
+      /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
+      window.matchMedia('(max-width: 768px)').matches;
+
+    // Renderer — 移动端关闭抗锯齿、降低像素比，大幅减少 GPU 负载
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: !this.isMobile,
+      powerPreference: this.isMobile ? 'low-power' : 'high-performance',
+    });
+    this.renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio, this.isMobile ? 1.5 : 2),
+    );
+    this.renderer.setClearColor(cssColorToHex('--scene-bg', '#f0ead0'));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = this.isMobile
+      ? THREE.BasicShadowMap       // 移动端: 基础阴影 (性能优先)
+      : THREE.PCFSoftShadowMap;    // 桌面端: 软阴影 (质量优先)
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.2;
 
@@ -112,7 +136,7 @@ export class HexRenderer3D {
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x0f1923, 0.006);
+    this.scene.fog = new THREE.FogExp2(cssColorToHex('--scene-bg', '#f0ead0'), 0.006);
     this.scene.add(this.boardGroup);
     this.scene.add(this.highlightGroup);
 
@@ -193,32 +217,77 @@ export class HexRenderer3D {
 
   // ---- Lighting ----
 
+  private lightAmbient!: THREE.AmbientLight;
+  private lightSun!: THREE.DirectionalLight;
+  private lightFill!: THREE.DirectionalLight;
+  private lightHemi!: THREE.HemisphereLight;
+
   private setupLighting(): void {
-    const ambient = new THREE.AmbientLight(0x6080b0, 0.8);
-    this.scene.add(ambient);
+    this.lightAmbient = new THREE.AmbientLight(0xfff8e0, 1.0);
+    this.scene.add(this.lightAmbient);
 
-    const sun = new THREE.DirectionalLight(0xfff0d0, 1.6);
-    sun.position.set(10, 20, 8);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(4096, 4096);
-    sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 60;
-    // 消除 shadow acne (阴影条纹)
-    sun.shadow.bias = -0.004;
-    sun.shadow.normalBias = 0.03;
+    this.lightSun = new THREE.DirectionalLight(0xfff0d0, 1.4);
+    this.lightSun.position.set(10, 20, 8);
+    this.lightSun.castShadow = true;
+    // 移动端 1024 vs 桌面端 2048 — 阴影分辨率对帧率影响极大
+    const shadowSize = this.isMobile ? 1024 : 2048;
+    this.lightSun.shadow.mapSize.set(shadowSize, shadowSize);
+    this.lightSun.shadow.camera.near = 0.5;
+    this.lightSun.shadow.camera.far = 60;
+    this.lightSun.shadow.bias = -0.004;
+    this.lightSun.shadow.normalBias = 0.03;
     const sc = 25;
-    sun.shadow.camera.left = -sc;
-    sun.shadow.camera.right = sc;
-    sun.shadow.camera.top = sc;
-    sun.shadow.camera.bottom = -sc;
-    this.scene.add(sun);
+    this.lightSun.shadow.camera.left = -sc;
+    this.lightSun.shadow.camera.right = sc;
+    this.lightSun.shadow.camera.top = sc;
+    this.lightSun.shadow.camera.bottom = -sc;
+    this.scene.add(this.lightSun);
 
-    const fill = new THREE.DirectionalLight(0x6090c0, 0.4);
-    fill.position.set(-6, 10, -8);
-    this.scene.add(fill);
+    this.lightFill = new THREE.DirectionalLight(0xf0e8d0, 0.5);
+    this.lightFill.position.set(-6, 10, -8);
+    this.scene.add(this.lightFill);
 
-    const hemi = new THREE.HemisphereLight(0x90b0d0, 0x203040, 0.4);
-    this.scene.add(hemi);
+    this.lightHemi = new THREE.HemisphereLight(0xfff8e8, 0xd0c8a0, 0.5);
+    this.scene.add(this.lightHemi);
+
+    this.applyThemeLighting();
+  }
+
+  /** 根据当前主题调整灯光和场景颜色 */
+  applyThemeColors(): void {
+    const bg = cssColorToHex('--scene-bg', '#f0ead0');
+    this.renderer.setClearColor(bg);
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.setHex(bg);
+    }
+    this.applyThemeLighting();
+    // 清除指纹缓存，强制全量重建所有地块 (更新空地颜色等)
+    this.prevModelFP.clear();
+    this.prevYieldFP.clear();
+    this.draw();
+  }
+
+  private applyThemeLighting(): void {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    if (isDark) {
+      this.lightAmbient.color.setHex(0x6080b0);
+      this.lightAmbient.intensity = 0.8;
+      this.lightSun.intensity = 1.6;
+      this.lightFill.color.setHex(0x6090c0);
+      this.lightFill.intensity = 0.4;
+      this.lightHemi.color.setHex(0x90b0d0);
+      this.lightHemi.groundColor.setHex(0x203040);
+      this.lightHemi.intensity = 0.4;
+    } else {
+      this.lightAmbient.color.setHex(0xfff8e0);
+      this.lightAmbient.intensity = 1.0;
+      this.lightSun.intensity = 1.4;
+      this.lightFill.color.setHex(0xf0e8d0);
+      this.lightFill.intensity = 0.5;
+      this.lightHemi.color.setHex(0xfff8e8);
+      this.lightHemi.groundColor.setHex(0xd0c8a0);
+      this.lightHemi.intensity = 0.5;
+    }
   }
 
   // ---- Events ----
@@ -430,6 +499,12 @@ export class HexRenderer3D {
           this.yieldSprites.splice(i, 1);
         }
       }
+      // 清除该 group 下的 star sprites 引用
+      for (let i = this.starSprites.length - 1; i >= 0; i--) {
+        if (this.starSprites[i].parent === group) {
+          this.starSprites.splice(i, 1);
+        }
+      }
       this.boardGroup.remove(group);
       this.disposeObject(group);
       this.tileGroups.delete(key);
@@ -566,6 +641,7 @@ export class HexRenderer3D {
       const starSprite = this.createStarSprite(starColor, starScale);
       starSprite.position.set(0, topY, 0);
       starSprite.userData = { isStar: true };
+      this.starSprites.push(starSprite);
       group.add(starSprite);
     }
 
@@ -667,9 +743,11 @@ export class HexRenderer3D {
         const nt = getTile(state.board, n);
         return nt && nt.unlocked;
       });
-      return hasAdj ? 0x1e3348 : 0x151e2a;
+      return hasAdj
+        ? cssColorToHex('--scene-hex-adj', '#d8d0b0')
+        : cssColorToHex('--scene-hex-empty', '#c8c0a0');
     }
-    return 0x1e3045;
+    return cssColorToHex('--scene-hex-default', '#d0c8a8');
   }
 
   /**
@@ -982,19 +1060,16 @@ export class HexRenderer3D {
     this.renderer.render(this.scene, this.camera);
   };
 
-  /** 装饰星上下浮动 + 旋转 */
+  /** 装饰星上下浮动 + 旋转 (使用跟踪列表，避免每帧 scene.traverse) */
   private tickStarFloating(): void {
+    if (this.starSprites.length === 0) return;
     const t = performance.now() * 0.001;
-    this.scene.traverse(obj => {
-      if (obj.userData?.isStar) {
-        // 上下浮动
-        const baseY = obj.userData.baseY ?? obj.position.y;
-        if (obj.userData.baseY === undefined) obj.userData.baseY = obj.position.y;
-        obj.position.y = baseY + Math.sin(t * 2 + baseY * 10) * 0.03;
-        // 旋转
-        (obj as THREE.Sprite).material.rotation = t * 1.5;
-      }
-    });
+    for (const sprite of this.starSprites) {
+      const baseY = sprite.userData.baseY ?? sprite.position.y;
+      if (sprite.userData.baseY === undefined) sprite.userData.baseY = sprite.position.y;
+      sprite.position.y = baseY + Math.sin(t * 2 + baseY * 10) * 0.03;
+      sprite.material.rotation = t * 1.5;
+    }
   }
 
   /** 脉动高亮 glow */

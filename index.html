@@ -4,16 +4,34 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
+    <!-- 国产浏览器兼容 (X5内核: 微信/QQ/百度; UC内核: 夸克/UC) -->
+    <meta name="x5-orientation" content="landscape" />
+    <meta name="x5-fullscreen" content="true" />
+    <meta name="x5-page-mode" content="app" />
+    <meta name="screen-orientation" content="landscape" />
+    <meta name="full-screen" content="yes" />
+    <meta name="browsermode" content="application" />
+    <meta name="renderer" content="webkit" />
     <title>文明精铺 Roguelike</title>
     <style>
       /* 防止加载闪烁 */
       body {
-        background: #0f1923;
+        background: #f5f0e0;
         margin: 0;
       }
     </style>
+    <script>
+      /* 在 CSS 加载前立即应用保存的主题，避免白色闪烁 */
+      (function () {
+        var t = localStorage.getItem("civ-theme") || "light";
+        document.documentElement.setAttribute("data-theme", t);
+        if (t === "dark")
+          document.querySelector("style").textContent =
+            "body{background:#0f1923;margin:0}";
+      })();
+    </script>
   </head>
   <body>
     <div id="app">
@@ -41,17 +59,16 @@
               <div id="shop-cards"></div>
             </div>
 
-            <!-- 道具入口 -->
-            <div id="item-shop-panel">
-              <h3>🎁 道具商店</h3>
-              <div id="item-shop-entries"></div>
-              <div id="eureka-badges"></div>
-            </div>
-
-            <!-- 道具背包 -->
-            <div id="item-inventory-panel" style="display: none">
-              <h3>📦 道具背包</h3>
-              <div id="item-inventory"></div>
+            <!-- 科技树入口 + 尤里卡 -->
+            <div id="tech-entry-panel">
+              <button
+                id="btn-open-tech"
+                class="action-btn"
+                style="width: 100%; margin-top: 8px"
+              >
+                🔬 科技树
+              </button>
+              <div id="eureka-badges" style="margin-top: 6px"></div>
             </div>
           </div>
         </div>
@@ -59,6 +76,7 @@
         <!-- 棋盘 -->
         <div id="board-container">
           <canvas id="board-canvas"></canvas>
+          <canvas id="board-canvas-2d" style="display: none"></canvas>
         </div>
 
         <!-- 右侧面板：地块信息+建造 -->
@@ -94,17 +112,17 @@
         <div id="game-over-content"></div>
       </div>
 
-      <!-- 道具商店叠加层 -->
-      <div id="item-shop-overlay">
-        <div id="item-shop-content">
-          <h2 id="item-shop-title">🎁 道具商店</h2>
-          <div id="item-shop-offerings"></div>
+      <!-- 科技树叠加层 -->
+      <div id="tech-tree-overlay">
+        <div id="tech-tree-content">
+          <h2 style="margin: 0 0 12px 0; text-align: center">🔬 科技树</h2>
+          <div id="tech-tree-panel"></div>
           <button
-            id="btn-close-item-shop"
+            id="btn-close-tech-tree"
             class="action-btn"
             style="margin-top: 16px; width: 100%"
           >
-            跳过（不选择）
+            关闭
           </button>
         </div>
       </div>
@@ -137,6 +155,11 @@
             <button id="btn-close-settings" class="action-btn">关闭</button>
           </div>
         </div>
+      </div>
+
+      <!-- 新手引导叠加层 -->
+      <div id="tutorial-overlay">
+        <div id="tutorial-content"></div>
       </div>
 
       <!-- 提示信息 -->

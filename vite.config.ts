@@ -13,7 +13,7 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'esnext',
+    target: 'es2017',            // 兼容百度/夸克/迅雷等国产浏览器 (Chromium 63+)
     assetsInlineLimit: 100000000,
     cssCodeSplit: false,
     minify: 'esbuild',
